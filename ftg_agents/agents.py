@@ -32,6 +32,20 @@ class BaseAgent(object):
         # rays start from -135
         ray_angle -= 3*pi/4
         return ray_angle
+"""
+lidar rays need to be already normalized
+"""
+class StochasticContinousFTGAgent(BaseAgent):
+    def __init__(self, deterministic=False, horizon=0.2):
+        self.deterministic = deterministic
+        self.horizon = horizon 
+
+    def __call__(self, model_input_dict, std=None):
+        # from the model_input_dict extract the lidar_occupancy
+        # input can be a torch tensor or a numpy array
+        scans = model_input_dict['lidar_occupancy'][0]
+        assert scans.
+        # define a horizon
 
 class StochasticFTGAgent(BaseAgent):
 
