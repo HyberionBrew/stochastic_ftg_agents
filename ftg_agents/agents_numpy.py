@@ -1,8 +1,9 @@
 import math as m
 
 import numpy as np
+from scipy.stats import truncnorm
 
-
+from scipy.stats import norm
 
 class BaseAgent(object):
     def __init__(self):
@@ -98,14 +99,8 @@ class StochasticContinousFTGAgent(BaseAgent):
     
     def __str__(self):
         return f"StochasticContinousFTGAgent_{self.speed_multiplier}_{self.gap_blocker}_{self.horizon}"
-    # use the prev action from the model_input_dict to make this stateless
-    def __call__(self, model_input_dict, std=None):
-        # from the model_input_dict extract the lidar_occupancy
-        # input can be a torch tensor or a numpy array
-        scans = model_input_dict['lidar_occupancy'][0].copy()
-        prev_action = model_input_dict['prev_action'][0].copy()
-        current_angle = prev_action[0]
-        current_velocity = prev_action[1]
+    
+    def compute_target(self, scans):
         assert scans.ndim == 1, "Scans should be a 1D array"
         horizon = self.horizon
         while horizon>0.1:
@@ -129,65 +124,114 @@ class StochasticContinousFTGAgent(BaseAgent):
         max_index = np.argmax(scans)
         #print(max_index)
         max_value = scans[max_index]
-        #if max_value < 0:
-        #print("MAX VALUE @ and horizon", max_value, max_index)
-        #print(scans)
-        # find the window of non-negative values around the target index
-        # find the first non-negative value to the left
-        # padd scans with -1.0 left and right
         
         left_scans = scans[max_index::-1]
         # find first negative
 
         first_left = np.argwhere(left_scans < 0.0)
-        #print("first left")
-        #print(first_left)
         if first_left.size == 0:
             first_left = 0
         else:
             first_left = max(max_index-first_left[0][0],0)
         
         right_scans = scans[max_index:]
-        # find first negative
+
         first_right = np.argwhere(right_scans < 0.0)
         if first_right.size == 0:
             first_right = len(scans) -1
         else:
             first_right = min(max_index + first_right[0][0], len(scans)-1)
-        #print("first left and right")
-        #print(first_left, first_right)
 
         target_ray = int((first_left + first_right) // 2) 
-        #print("target ray")
-        #print(target_ray)
         if max_value < 0:
             target_angle = 0.0
         else:
             target_angle = self.lidar_ray_to_steering(target_ray, self.subsample)
-        #print(target_angle)
-        # now we need to implement delta change
-        target_angle = target_angle #- self.current_angle
-        # target_angle = 0.5
-        #print(self.current_angle)
-        #print(target_angle)
-        #print("------")
-        # clip target angle between -3/4 pi and 3/4 pi
-        target_angle = np.clip(target_angle, -3*np.pi/4, 3*np.pi/4)
-        # if the gap is not existent, then make a fake gap that is in the middle
+        
         if len(scans[first_left:first_right]) == 0:
             gap = [0.5]
         else:
             gap = scans[first_left:first_right]
         target_speed = self.compute_speed(gap)
+        return target_angle, target_speed
+    
+    # use the prev action from the model_input_dict to make this stateless
+    def __call__(self, model_input_dict, action=None, std_angle=None, std_speed=0.1):
+        # from the model_input_dict extract the lidar_occupancy
+        # input can be a torch tensor or a numpy array
+        if action is not None:
+            assert action.ndim == 1, "Action should be a 1D array"  
+        #if not(self.deterministic):
+        std_angle = 0.2 if std_angle is None else std_angle
+        std_speed = 0.1 if std_speed is None else std_speed
+        scans = model_input_dict['lidar_occupancy'][0].copy()
+        prev_action = model_input_dict['prev_action'][0].copy()
+        current_angle = prev_action[0]
+        current_velocity = prev_action[1]
+        
+        target_angle, target_speed = self.compute_target(scans)
+        #print(target_angle)
+        # now we need to implement delta change
+        """
+        if not(self.deterministic) or action is not None:
+            stochastic_target_angle = np.random.normal(target_angle, std_angle)
+            stochastic_target_speed = np.random.normal(target_speed, std_speed)
+            stochastic_target_angle = np.clip(stochastic_target_angle, -3*np.pi/4, 3*np.pi/4)
+            stochastic_target_speed = np.clip(stochastic_target_speed, self.start_velocity, 2.0)
+            print("stochastic target angle", stochastic_target_angle)
+            # Compute log probabilities
+            if action is not None:
+                # need to recover the originial target angle and speed
+                stochastic_target_angle = prev_action[0] + action[0]
+                print("input target angle", stochastic_target_angle)
+                stochastic_target_speed = prev_action[1] + action[1]
+
+            log_prob_angle = norm.logpdf(stochastic_target_angle, target_angle, std_angle)
+            log_prob_speed = norm.logpdf(stochastic_target_speed, target_speed, std_speed)
+
+            # Combine log probabilities
+            log_prob = log_prob_angle + log_prob_speed
+        else:
+            log_prob = 0.0
+        """
+        # clip target angle between -3/4 pi and 3/4 pi
+        
+        # if the gap is not existent, then make a fake gap that is in the middle
+        
         delta_angle, current_angle = self.get_delta_angle(target_angle, current_angle)
         delta_speed, current_velocity = self.get_delta_speed(target_speed, current_velocity)
-        #self.current_angle = current_angle # * -1.0
-        #self.current_velocity = current_velocity
-        # print(self.current_velocity)
+        
+        means = np.array([delta_angle,delta_speed]) / 0.05 
+        # clip means to be between -1 and 1
+        lower, upper = -1.0, 1.0
+
+        # Adjust means and std if necessary
+        means = np.clip(means, lower, upper)
+
+        # Scale the bounds for the truncated normal distribution
+        a, b = (lower - means) / std_angle, (upper - means) / std_angle
+
+        if not self.deterministic:
+            
+            targets = np.random.normal(means, std_angle)
+        else:
+            targets = means
+            
+        targets = np.clip(targets, lower, upper)
+        # clip targets to be between
+        if action is not None:
+            assert (action <= upper).all() and (action >= lower).all(), f"Action should be between -1 and 1 {action}"
+            # Create a truncated normal distribution object
+            dist = truncnorm(a, b, loc=means, scale=std_angle)
+            log_prob = dist.logpdf(action)
+
+        else:
+            # Similarly for targets
+            dist = truncnorm(a, b, loc=means, scale=std_angle)
+            log_prob = dist.logpdf(targets)
+
         # TODO! make stochastic and calculate log prob
-        log_prob = 1.0
-        #print("returning", np.array([delta_angle,delta_speed]) , None , log_prob)
-        return np.array([delta_angle,delta_speed]) , None , log_prob
+        return  targets , None , np.sum(log_prob, axis=-1)
 
 eval_config = {
     "collision_penalty": -10.0,
@@ -203,7 +247,7 @@ eval_config = {
 
 if __name__ == "__main__":
     from f110_sim_env.base_env import make_base_env
-    agent = StochasticContinousFTGAgent(current_speed = 0.5)
+    agent = StochasticContinousFTGAgent(current_speed = 0.0, deterministic=True)
     rays = np.ones((1,54,)) * 0.19
     rays[:,:10] += 0.1
     #rays += 0.5
@@ -221,8 +265,8 @@ if __name__ == "__main__":
             reward_config = eval_config,
             eval=False,
             use_org_reward=True,
-            min_vel=0.5,
-            max_vel=0.5,
+            min_vel=0.0,
+            max_vel=0.0,
         )
 
     action = np.array([0.0,0.0])
@@ -236,18 +280,13 @@ if __name__ == "__main__":
         j = 0
         while not done and not truncated:
             obs, reward, done, truncated, info = eval_env.step(action)
-            #print(info["observations"]["lidar_occupancy"])
-            #print("prev action")
-            #print(info["observations"]["previous_action"])
-            obs_dict = {'lidar_occupancy':  np.array([info["observations"]["lidar_occupancy"]])}
-            action = agent(model_input_dict=obs_dict)
-            # rescale action to be between -1 and 1, 0.05 is one
-            action = action/0.05
 
-            #print("curr action")
-            #print(action)
+            obs_dict = {'lidar_occupancy':  np.array([info["observations"]["lidar_occupancy"]])}
+            obs_dict['prev_action'] = np.array(info["observations"]["previous_action"])
+            action, _ , log_prob = agent(model_input_dict=obs_dict)
+            _, _ , test_prob = agent(model_input_dict=obs_dict, action=action)
+            assert(log_prob == test_prob)
+            print(log_prob)
+            # rescale action to be between -1 and 1, 0.05 is one
+            #action = action/0.05
             eval_env.render()
-            if j == 3:
-                pass
-                #exit()
-            j += 1
