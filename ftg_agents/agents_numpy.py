@@ -39,7 +39,7 @@ class BaseAgent(object):
 @input lidar rays need to be already normalized
 """
 class StochasticContinousFTGAgent(BaseAgent):
-    def __init__(self, current_speed=0.0, deterministic=False, horizon=0.2, subsample=20,gap_size_max_speed=10):
+    def __init__(self, current_speed=0.0, deterministic=False, gap_blocker = 2, max_speed=2.0, horizon=0.2, subsample=20,gap_size_max_speed=10, speed_multiplier=2.0, std=0.3):
         # initalize parent
         super(StochasticContinousFTGAgent, self).__init__()
         self.deterministic = deterministic
@@ -50,9 +50,11 @@ class StochasticContinousFTGAgent(BaseAgent):
         self.max_change = 0.05
         self.exp_decay = 0.1
         self.gap_max = gap_size_max_speed
-        self.gap_blocker = 2
+        self.gap_blocker = gap_blocker
         self.start_velocity = current_speed
-        self.speed_multiplier = 2.0 # higher values slower agent
+        self.speed_multiplier = speed_multiplier# higher values slower agent
+        self.std = std
+        self.max_speed = max_speed 
 
     def get_delta_angle(self, target, current):
         #print("delta")
@@ -69,6 +71,7 @@ class StochasticContinousFTGAgent(BaseAgent):
         return delta_angle, new_angle
     
     def compute_speed(self, gap):
+        """
         gap_size = len(gap)
         if len(gap)==0:
             return 0.0
@@ -78,8 +81,21 @@ class StochasticContinousFTGAgent(BaseAgent):
         # max ray in gap 
         max_ray = max(gap)
         # clip max ray between 0 and 10
+        # print(max_ray)
+        # gap larger than 0 
+        larger_than_zero = gap[np.where(gap>0.0)[0]]
+        print(gap)
+        max_ray = np.sum(larger_than_zero)**2 #/len(larger_than_zero)
+        print(np.sum(larger_than_zero))
+        print(len(larger_than_zero))
         max_ray = np.clip(max_ray, 0.0, self.speed_multiplier)
-        speed = 0.5 + (max_ray / self.speed_multiplier) * 1.5
+        print(max_ray)
+        print("------")
+        """
+        max_ray = gap[0]
+        max_ray = np.clip(max_ray, 0.0, self.speed_multiplier)
+        speed = 0.0 + (max_ray / self.speed_multiplier) * self.max_speed
+        # print(max_ray)
         return speed
     
     def reset(self):
@@ -98,11 +114,13 @@ class StochasticContinousFTGAgent(BaseAgent):
         return delta_speed, new_speed
     
     def __str__(self):
-        return f"StochasticContinousFTGAgent_{self.speed_multiplier}_{self.gap_blocker}_{self.horizon}"
+        return f"StochasticContinousFTGAgent_{self.speed_multiplier}_{self.gap_blocker}_{self.horizon}_{self.std}_{self.max_speed}"
     
     def compute_target(self, scans):
+        # print(scans)
         assert scans.ndim == 1, "Scans should be a 1D array"
         horizon = self.horizon
+        og_scans = scans.copy()
         while horizon>0.1:
             scans_temp = scans.copy()
             scans_temp[scans < horizon] = -1.0
@@ -152,48 +170,27 @@ class StochasticContinousFTGAgent(BaseAgent):
             gap = [0.5]
         else:
             gap = scans[first_left:first_right]
-        target_speed = self.compute_speed(gap)
+        target_speed = self.compute_speed([og_scans[int(len(og_scans)//2)]])
         return target_angle, target_speed
     
     # use the prev action from the model_input_dict to make this stateless
-    def __call__(self, model_input_dict, action=None, std_angle=None, std_speed=0.1):
+    def __call__(self, model_input_dict, action=None, std=None):
         # from the model_input_dict extract the lidar_occupancy
         # input can be a torch tensor or a numpy array
         if action is not None:
             assert action.ndim == 1, "Action should be a 1D array"  
         #if not(self.deterministic):
-        std_angle = 0.2 if std_angle is None else std_angle
-        std_speed = 0.1 if std_speed is None else std_speed
-        scans = model_input_dict['lidar_occupancy'][0].copy()
-        prev_action = model_input_dict['prev_action'][0].copy()
+        # TODO! clean this up
+        std_angle = self.std #if std_angle is None else std_angle
+        std_speed = self.std #if std_speed is None else std_speed
+        scans = model_input_dict['lidar_occupancy'].copy()
+        prev_action = model_input_dict['previous_action'][0].copy()
         current_angle = prev_action[0]
         current_velocity = prev_action[1]
         
         target_angle, target_speed = self.compute_target(scans)
         #print(target_angle)
         # now we need to implement delta change
-        """
-        if not(self.deterministic) or action is not None:
-            stochastic_target_angle = np.random.normal(target_angle, std_angle)
-            stochastic_target_speed = np.random.normal(target_speed, std_speed)
-            stochastic_target_angle = np.clip(stochastic_target_angle, -3*np.pi/4, 3*np.pi/4)
-            stochastic_target_speed = np.clip(stochastic_target_speed, self.start_velocity, 2.0)
-            print("stochastic target angle", stochastic_target_angle)
-            # Compute log probabilities
-            if action is not None:
-                # need to recover the originial target angle and speed
-                stochastic_target_angle = prev_action[0] + action[0]
-                print("input target angle", stochastic_target_angle)
-                stochastic_target_speed = prev_action[1] + action[1]
-
-            log_prob_angle = norm.logpdf(stochastic_target_angle, target_angle, std_angle)
-            log_prob_speed = norm.logpdf(stochastic_target_speed, target_speed, std_speed)
-
-            # Combine log probabilities
-            log_prob = log_prob_angle + log_prob_speed
-        else:
-            log_prob = 0.0
-        """
         # clip target angle between -3/4 pi and 3/4 pi
         
         # if the gap is not existent, then make a fake gap that is in the middle
@@ -216,7 +213,7 @@ class StochasticContinousFTGAgent(BaseAgent):
             targets = np.random.normal(means, std_angle)
         else:
             targets = means
-            
+
         targets = np.clip(targets, lower, upper)
         # clip targets to be between
         if action is not None:
@@ -231,7 +228,7 @@ class StochasticContinousFTGAgent(BaseAgent):
             log_prob = dist.logpdf(targets)
 
         # TODO! make stochastic and calculate log prob
-        return  targets , None , np.sum(log_prob, axis=-1)
+        return  None, targets , np.sum(log_prob, axis=-1)
 
 eval_config = {
     "collision_penalty": -10.0,
@@ -282,7 +279,7 @@ if __name__ == "__main__":
             obs, reward, done, truncated, info = eval_env.step(action)
 
             obs_dict = {'lidar_occupancy':  np.array([info["observations"]["lidar_occupancy"]])}
-            obs_dict['prev_action'] = np.array(info["observations"]["previous_action"])
+            obs_dict['previous_action'] = np.array(info["observations"]["previous_action"])
             action, _ , log_prob = agent(model_input_dict=obs_dict)
             _, _ , test_prob = agent(model_input_dict=obs_dict, action=action)
             assert(log_prob == test_prob)
