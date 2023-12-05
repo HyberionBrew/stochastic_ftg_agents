@@ -56,6 +56,10 @@ class StochasticContinousFTGAgent(BaseAgent):
     def get_delta_angle(self, target, current):
         #print("delta")
         angle_diff = target - current
+        if np.abs(angle_diff) < 0.001:
+            #print(angle_diff)
+            delta_angle = 0.0
+            return delta_angle, current
         #print(angle_diff)
         delta_angle = np.sign(angle_diff) * min(self.max_change, self.max_change * np.exp(-self.exp_decay * 1/abs(angle_diff)))
         new_angle = current + delta_angle
@@ -65,6 +69,8 @@ class StochasticContinousFTGAgent(BaseAgent):
     
     def compute_speed(self, gap):
         gap_size = len(gap)
+        if len(gap)==0:
+            return 0.0
         # if gap size is 10 full speed else, linear
         gap_size = min(gap_size, self.gap_max)
         #print("gap size", gap_size)
@@ -87,13 +93,19 @@ class StochasticContinousFTGAgent(BaseAgent):
         else:
             delta_speed = 0.0
         new_speed = current + delta_speed
-        new_speed = np.clip(new_speed, 0.5, 2.0)
+        new_speed = np.clip(new_speed, self.start_velocity, 2.0)
         return delta_speed, new_speed
-
+    
+    def __str__(self):
+        return f"StochasticContinousFTGAgent_{self.speed_multiplier}_{self.gap_blocker}_{self.horizon}"
+    # use the prev action from the model_input_dict to make this stateless
     def __call__(self, model_input_dict, std=None):
         # from the model_input_dict extract the lidar_occupancy
         # input can be a torch tensor or a numpy array
         scans = model_input_dict['lidar_occupancy'][0].copy()
+        prev_action = model_input_dict['prev_action'][0].copy()
+        current_angle = prev_action[0]
+        current_velocity = prev_action[1]
         assert scans.ndim == 1, "Scans should be a 1D array"
         horizon = self.horizon
         while horizon>0.1:
@@ -161,13 +173,21 @@ class StochasticContinousFTGAgent(BaseAgent):
         #print("------")
         # clip target angle between -3/4 pi and 3/4 pi
         target_angle = np.clip(target_angle, -3*np.pi/4, 3*np.pi/4)
-        target_speed = self.compute_speed(scans[first_left:first_right])
-        delta_angle, current_angle = self.get_delta_angle(target_angle, self.current_angle)
-        delta_speed, current_velocity = self.get_delta_speed(target_speed, self.current_velocity)
-        self.current_angle = current_angle # * -1.0
-        self.current_velocity = current_velocity
-        print(self.current_velocity)
-        return np.array([[delta_angle,delta_speed]])
+        # if the gap is not existent, then make a fake gap that is in the middle
+        if len(scans[first_left:first_right]) == 0:
+            gap = [0.5]
+        else:
+            gap = scans[first_left:first_right]
+        target_speed = self.compute_speed(gap)
+        delta_angle, current_angle = self.get_delta_angle(target_angle, current_angle)
+        delta_speed, current_velocity = self.get_delta_speed(target_speed, current_velocity)
+        #self.current_angle = current_angle # * -1.0
+        #self.current_velocity = current_velocity
+        # print(self.current_velocity)
+        # TODO! make stochastic and calculate log prob
+        log_prob = 1.0
+        #print("returning", np.array([delta_angle,delta_speed]) , None , log_prob)
+        return np.array([delta_angle,delta_speed]) , None , log_prob
 
 eval_config = {
     "collision_penalty": -10.0,
