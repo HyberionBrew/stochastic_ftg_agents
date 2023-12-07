@@ -284,10 +284,10 @@ class StochasticContinousFTGAgent(BaseAgent):
         return target_angle, target_speed
     
     # use the prev action from the model_input_dict to make this stateless
-    def __call__(self, model_input_dict, action=None, std=None):
+    def __call__(self, model_input_dict, actions=None, std=None):
         std_angle = self.std
         std_speed = self.std
-
+        action =actions
         # Asserting the shape of action if it's not None
         if action is not None:
             assert action.ndim == 2 and action.shape[1] == 2, "Action should be a 2D array with shape (batches, 2)"
@@ -351,7 +351,7 @@ eval_config = {
 
 if __name__ == "__main__":
     from f110_sim_env.base_env import make_base_env
-    agent = StochasticContinousFTGAgent(current_speed = 0.0, deterministic=False, std=0.1, speed_multiplier=0.5)
+    agent = StochasticContinousFTGAgent(current_speed = 0.0, deterministic=False, std=0.1, speed_multiplier=2.0)
     rays = np.ones((1,54,)) * 0.1
     rays[:,:10] += 0.1
     #rays += 0.5
@@ -395,7 +395,8 @@ if __name__ == "__main__":
             fake_lidar = np.concatenate((fake_lidar2, fake_lidar,lidar), axis=0)
             #print(fake_lidar.shape)
             obs_dict = {'lidar_occupancy':  fake_lidar}#,info["observations"]["lidar_occupancy"]])}
-            obs_dict['previous_action'] = np.array(info["observations"]["previous_action"])
+            # print(fake_lidar)
+            obs_dict['previous_action'] = np.array([info["observations"]["previous_action"]])
             _, action , log_prob = agent(model_input_dict=obs_dict)
             #print("prev_action", info["observations"]["previous_action"])
             #print("action:", action)
