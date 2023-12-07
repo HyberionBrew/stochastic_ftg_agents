@@ -147,7 +147,7 @@ class StochasticContinousFTGAgent(BaseAgent):
 
         return result
 
-
+    # use numpy batches
     def compute_target(self, scans_batch):
         assert scans_batch.ndim == 2, "Scans should be a 2D array with shape (batches, dim)"
         horizon = self.horizon
