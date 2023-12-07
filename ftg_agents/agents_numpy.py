@@ -6,14 +6,18 @@ from scipy.stats import truncnorm
 from scipy.stats import norm
 
 class BaseAgent(object):
-    def __init__(self):
+    def __init__(self, max_change=0.05, exp_decay=0.1, start_velocity=0.0, max_speed=2.0 ):
         # self.env = env
         #self.action_space = env.action_space
         #self.observation_space = env.observation_space
         # there are 1080 rays over 270 degrees, calculate the angle increment
         self.angle_increment = 270. / 1080. * np.pi / 180.
-    
-    def __call__(self, obs, std=None, actions=None): 
+        self.max_change = max_change
+        self.exp_decay = exp_decay
+        self.start_velocity = start_velocity
+        self.max_speed = max_speed
+
+    def __call__(self, obs: dict, std=None, actions=None): 
         # Std is actually just ignored       
         if actions is None:
             speed, action = self.get_action(obs)
@@ -34,6 +38,29 @@ class BaseAgent(object):
         # rays start from -135
         ray_angle -= 3*np.pi/4
         return ray_angle
+    
+    def get_delta_angle(self, target, current):
+        #print("delta")
+        angle_diff = target - current[:None]
+        angle_diff[np.isclose(angle_diff,0.0)] = 0.0001 
+        #print(angle_diff)
+        #print(self.max_change)
+        #print(np.array(self.max_change))
+        delta_angle = np.sign(angle_diff) * np.minimum(self.max_change, self.max_change * np.exp(-self.exp_decay * 1/np.abs(angle_diff)))
+        new_angle = current + delta_angle
+        #print(new_angle)
+        new_angle = np.clip(new_angle, -3*np.pi/4, 3*np.pi/4)
+        return delta_angle, new_angle
+
+    def get_delta_speed(self, target, current):
+        speed_diff = target - current
+        speed_diff[np.isclose(speed_diff,0.0)] = 0.0001 
+            #print(speed_diff)
+        delta_speed = np.sign(speed_diff) * np.minimum(self.max_change, self.max_change * np.exp(-self.exp_decay * 1/abs(speed_diff)))
+
+        new_speed = current + delta_speed
+        new_speed = np.clip(new_speed, self.start_velocity, 2.0)
+        return delta_speed, new_speed
 
 """
 @input lidar rays need to be already normalized
@@ -56,18 +83,7 @@ class StochasticContinousFTGAgent(BaseAgent):
         self.std = std
         self.max_speed = max_speed 
 
-    def get_delta_angle(self, target, current):
-        #print("delta")
-        angle_diff = target - current[:None]
-        angle_diff[np.isclose(angle_diff,0.0)] = 0.0001 
-        #print(angle_diff)
-        #print(self.max_change)
-        #print(np.array(self.max_change))
-        delta_angle = np.sign(angle_diff) * np.minimum(self.max_change, self.max_change * np.exp(-self.exp_decay * 1/np.abs(angle_diff)))
-        new_angle = current + delta_angle
-        #print(new_angle)
-        new_angle = np.clip(new_angle, -3*np.pi/4, 3*np.pi/4)
-        return delta_angle, new_angle
+ 
     
     def compute_speed(self, gap):
         assert gap.ndim == 1, "Gap should be a 1D array"
@@ -102,15 +118,7 @@ class StochasticContinousFTGAgent(BaseAgent):
         self.current_angle = 0.0
         self.current_velocity = self.start_velocity
 
-    def get_delta_speed(self, target, current):
-        speed_diff = target - current
-        speed_diff[np.isclose(speed_diff,0.0)] = 0.0001 
-            #print(speed_diff)
-        delta_speed = np.sign(speed_diff) * np.minimum(self.max_change, self.max_change * np.exp(-self.exp_decay * 1/abs(speed_diff)))
 
-        new_speed = current + delta_speed
-        new_speed = np.clip(new_speed, self.start_velocity, 2.0)
-        return delta_speed, new_speed
     
     def __str__(self):
         return f"StochasticContinousFTGAgent_{self.speed_multiplier}_{self.gap_blocker}_{self.horizon}_{self.std}_{self.max_speed}"
@@ -351,7 +359,7 @@ eval_config = {
 
 if __name__ == "__main__":
     from f110_sim_env.base_env import make_base_env
-    agent = StochasticContinousFTGAgent(current_speed = 0.0, deterministic=False, std=0.1, speed_multiplier=2.0)
+    agent = StochasticContinousFTGAgent(current_speed = 0.0, deterministic=False, std=0.1, speed_multiplier=0.5)
     rays = np.ones((1,54,)) * 0.1
     rays[:,:10] += 0.1
     #rays += 0.5
@@ -398,10 +406,10 @@ if __name__ == "__main__":
             # print(fake_lidar)
             obs_dict['previous_action'] = np.array([info["observations"]["previous_action"]])
             _, action , log_prob = agent(model_input_dict=obs_dict)
-            #print("prev_action", info["observations"]["previous_action"])
-            #print("action:", action)
+            print("prev_action", info["observations"]["previous_action"])
+            print("action:", action)
 
-            _, _ , test_prob = agent(model_input_dict=obs_dict, action=action)
+            _, _ , test_prob = agent(model_input_dict=obs_dict, actions=action)
             assert((log_prob == test_prob).all())
             #print(log_prob)
             # rescale action to be between -1 and 1, 0.05 is one
