@@ -4,6 +4,7 @@ import numpy as np
 from scipy.stats import truncnorm
 
 from scipy.stats import norm
+import copy
 
 class BaseAgent(object):
     def __init__(self, max_change=0.05, exp_decay=0.1, start_velocity=0.0, max_speed=2.0 ):
@@ -152,19 +153,20 @@ class StochasticContinousFTGAgent(BaseAgent):
         assert scans_batch.ndim == 2, "Scans should be a 2D array with shape (batches, dim)"
         horizon = self.horizon
         og_scans = scans_batch.copy()
+        scans = scans_batch.copy()
         # block 15% of the left and rightmost scans
-        block_length = int(len(scans_batch[0])*0.15)
-        scans_batch[:,:block_length] = -1.0
-        scans_batch[:,-block_length:] = -1.0
+        block_length = int(len(scans[0])*0.15)
+        scans[:,:block_length] = -1.0
+        scans[:,-block_length:] = -1.0
         # now lets iterate over the horizon
         #scans_finished_indices = np.zeros(len(scans_batch))
-        scans_done = np.zeros(len(scans_batch))
-        scans_processed = np.zeros_like(scans_batch) - 1.0
+        scans_done = np.zeros(len(scans))
+        scans_processed = np.zeros_like(scans) - 1.0
 
         while horizon > 0.05:
             #print(horizon)
             #print("done:", scans_done)
-            scans_temp = scans_batch.copy()
+            scans_temp = scans.copy()
             scans_missing_indices = np.where(scans_done == 0.0)[0]
 
             current_scan = scans_temp[scans_missing_indices] #= -1.0
@@ -295,16 +297,18 @@ class StochasticContinousFTGAgent(BaseAgent):
     def __call__(self, model_input_dict, actions=None, std=None):
         std_angle = self.std
         std_speed = self.std
+        # safety copy to ensure no funky business
+        model_input_dict_ = copy.deepcopy(model_input_dict)
         action =actions
         # Asserting the shape of action if it's not None
         if action is not None:
             assert action.ndim == 2 and action.shape[1] == 2, "Action should be a 2D array with shape (batches, 2)"
-        assert "lidar_occupancy" in model_input_dict
-        assert len(model_input_dict["lidar_occupancy"].shape) == 2, "Lidar occupancy should be a 2D array"
-        assert "previous_action" in model_input_dict
-        assert len(model_input_dict["previous_action"].shape) == 3, "Previous action should be a 3D (batch,1,2) array, yes weird TODO!"
-        scans = model_input_dict['lidar_occupancy']
-        prev_actions = model_input_dict['previous_action']
+        assert "lidar_occupancy" in model_input_dict_
+        assert len(model_input_dict_["lidar_occupancy"].shape) == 2, "Lidar occupancy should be a 2D array"
+        assert "previous_action" in model_input_dict_
+        assert len(model_input_dict_["previous_action"].shape) == 3, "Previous action should be a 3D (batch,1,2) array, yes weird TODO!"
+        scans = model_input_dict_['lidar_occupancy']
+        prev_actions = model_input_dict_['previous_action']
         current_angles = prev_actions[:,0, 0]
         #print(prev_actions.shape)
         #print(prev_actions[:10])
@@ -322,9 +326,10 @@ class StochasticContinousFTGAgent(BaseAgent):
         means = np.vstack((delta_angles, delta_speeds)).T / 0.05
         means = np.clip(means, -1.0, 1.0)
 
-        a = (means - 1.0) / std_angle
-        b = (means + 1.0) / std_angle
-
+        a = (- 1.0 - means) / std_angle
+        b = (1.0 - means ) / std_angle
+        #print(a)
+        #print(b)
         if not self.deterministic:
             targets = np.random.normal(means, std_angle)
         else:
@@ -332,17 +337,33 @@ class StochasticContinousFTGAgent(BaseAgent):
 
         targets = np.clip(targets, -1.0, 1.0)
 
+        #r = truncnorm.rvs(a[0,0], b[0,0], size=1000)
+        #print(a[0,0])
+        #print(b[0,0])
+        # plot r
+        #import matplotlib.pyplot as plt
         dist = truncnorm(a, b, loc=means, scale=std_angle)
-
+        # sample and plot
+        #dis2t = truncnorm(a[0,0], b[0,0], loc=means[0,0], scale=std_angle)
+        #samples = dis2t.rvs(size=1000)
+        #plt.hist(samples, density=True, bins='auto', histtype='stepfilled', alpha=0.2)
+        #plt.show()
         if action is not None:
             assert (action <= 1.0).all() and (action >= -1.0).all(), "Action should be between -1 and 1"
             log_probs = dist.logpdf(action).sum(axis=1)
         else:
-            log_probs = dist.logpdf(targets).sum(axis=1)
+            #print("targets",targets)
+            log_probs = dist.logpdf(targets) #.sum(axis=1)
+            #print("not added log_probs", log_probs)
+            #print(log_probs)
+            log_probs = np.sum(log_probs, axis=1)
 
         # log_probs = 1.0
         #print("mean", means)
         #print("target", targets)
+        assert (log_probs != -np.inf).all()
+        # also assert no log_prob is nan
+        assert (log_probs != np.nan).all()
         return None, targets, log_probs
 
 eval_config = {
@@ -359,7 +380,7 @@ eval_config = {
 
 if __name__ == "__main__":
     from f110_sim_env.base_env import make_base_env
-    agent = StochasticContinousFTGAgent(current_speed = 0.0, deterministic=False, std=0.1, speed_multiplier=0.5)
+    agent = StochasticContinousFTGAgent(current_speed = 0.0, deterministic=False, speed_multiplier=0.5)
     rays = np.ones((1,54,)) * 0.1
     rays[:,:10] += 0.1
     #rays += 0.5
@@ -405,11 +426,16 @@ if __name__ == "__main__":
             obs_dict = {'lidar_occupancy':  fake_lidar}#,info["observations"]["lidar_occupancy"]])}
             # print(fake_lidar)
             obs_dict['previous_action'] = np.array([info["observations"]["previous_action"]])
+            #print(obs_dict)
             _, action , log_prob = agent(model_input_dict=obs_dict)
-            print("prev_action", info["observations"]["previous_action"])
-            print("action:", action)
+            print(obs_dict)
+            #print("prev_action", info["observations"]["previous_action"])
+            #print("action:", action)
+            # print(log_prob)
+            assert (log_prob != -np.inf).all()
 
             _, _ , test_prob = agent(model_input_dict=obs_dict, actions=action)
+            # assert logprobs are all larger than - inf
             assert((log_prob == test_prob).all())
             #print(log_prob)
             # rescale action to be between -1 and 1, 0.05 is one
