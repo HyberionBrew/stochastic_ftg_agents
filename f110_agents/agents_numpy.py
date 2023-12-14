@@ -382,7 +382,7 @@ class StochasticContinousFTGAgent(BaseAgent):
         return target_angle, target_speed
     
     # use the prev action from the model_input_dict to make this stateless
-    def __call__(self, model_input_dict, actions=None, std=None):
+    def __call__(self, model_input_dict, actions=None, std=None, current_timestep=None):
         std_angle = self.std
         std_speed = self.std
         # safety copy to ensure no funky business
