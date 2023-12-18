@@ -34,8 +34,9 @@ class StochasticContinousPPAgent(BaseAgent):
         self.deterministic = deterministic
         self.raceline_file = raceline_file
         self.fixed_speed = fixed_speed
-        self.track = Track('/home/fabian/msc/f110_dope/ws_ope/f1tenth_gym/gym/f110_gym/maps/Infsaal/Infsaal_centerline.csv')
+        self.track = Track('/sim_ws/src/f1tenth_gym_ros/maps/Infsaal/Infsaal_centerline.csv')
         self.current_track_point = None
+        self.subsample = 20
     
     def find_closest_track_point(self, x, y):
         """
@@ -83,11 +84,11 @@ class StochasticContinousPPAgent(BaseAgent):
         distances = np.sqrt((xs[indices_ahead] - x) ** 2 + (ys[indices_ahead] - y) ** 2)
         
         # Find the first index where distance is greater than lookahead_distance
-        while True:
-            first_valid_indices = np.argmax(distances > lookahead_distance, axis=1)
-            if np.all(first_valid_indices):
-                break
-            lookahead_distance *= 2
+        #while True:
+        first_valid_indices = np.argmax(distances > lookahead_distance, axis=1)
+        #    if np.all(first_valid_indices):
+        #        break
+        #    lookahead_distance *= 2
         #print(first_valid_indices)
         # If no valid index is found within the range, keep the current track point
         # TODO! maybe make this a loop until we find a valid index
@@ -141,6 +142,7 @@ class StochasticContinousPPAgent(BaseAgent):
         # model input dict values have a batch dimension
         # extract the current position and orientation
         #print(model_input_dict)
+        # print("called")
         model_input_dict_ = model_input_dict.copy()
         x = model_input_dict_['poses_x']
         y = model_input_dict_['poses_y']
@@ -157,7 +159,7 @@ class StochasticContinousPPAgent(BaseAgent):
         calculated_steering_angle = self.calculate_steering_angle(x,y,theta,next_track_point, lookahead)
         #print(calculated_steering_angle)
         speed = 0.0
-        if self.fixed_speed:
+        if self.fixed_speed is not None:
             speed = 0.5
         else:
             raise NotImplementedError
@@ -171,9 +173,13 @@ class StochasticContinousPPAgent(BaseAgent):
 
         delta_angles, abs_angle = self.get_delta_angle(calculated_steering_angle, current_angle)
         delta_speeds, abs_speed = self.get_delta_speed(speed, current_speed)
+        print("target angle", abs_angle)
+        print("target speed", abs_speed)
         means = np.vstack((delta_angles, delta_speeds)).T / 0.05
         means = np.clip(means, -1.0, 1.0)
         actions = means
+        actions = np.zeros_like(means)
+
         log_probs = np.ones((delta_angles.shape[0]))
         return None, actions, log_probs
 
