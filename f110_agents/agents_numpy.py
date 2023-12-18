@@ -4,6 +4,7 @@ import numpy as np
 from scipy.stats import truncnorm
 
 from scipy.stats import norm
+import copy
 
 class BaseAgent(object):
     def __init__(self, max_change=0.05, exp_decay=0.1, start_velocity=0.0, max_speed=2.0 ):
@@ -62,6 +63,94 @@ class BaseAgent(object):
         new_speed = np.clip(new_speed, self.start_velocity, 2.0)
         return delta_speed, new_speed
 
+class SwitchingAgentWrapper(object):
+    def __init__(self, Agent1, Agent2):
+        self.agent = DoubleAgentWrapper(Agent1, Agent2, timestep_switch=1)
+    def __str__(self):
+        return f"SwitchingAgentWrapper_{self.agent}"
+    def __call__(self, timestep, model_input_dict,actions=None, std=None):
+        # set all even timesteps to 0 all odd ones to 1
+        timestep = timestep % 2
+        return self.agent(timestep, model_input_dict, actions=actions, std=std)
+
+
+class DoubleAgentWrapper(object):
+    def __init__(self, Agent1, Agent2, timestep_switch = 200):
+        self.Agent1 = Agent1
+        self.Agent2 = Agent2
+        self.timestep_switch = timestep_switch
+    def __str__(self):
+        return f"AgentWrapper_{self.Agent1}_{self.Agent2}_{self.timestep_switch}"
+    
+    def __call__(self, timestep, model_input_dict,actions=None, std=None):
+        # split the model_input dict according to the timestep
+        # assert all timesteps smaller than 1000
+        assert (timestep < 1002).all(), f"Timestep should be smaller than 1000, are {timestep.max()}"
+        model_input_dict_1 = {}
+        model_input_dict_2 = {}
+        assert model_input_dict['lidar_occupancy'].shape[0] == timestep.shape[0], f"Timestep {timestep.shape} and lidar_occupancy  {model_input_dict['lidar_occupancy'].shape} should have the same batch size"
+        if len(timestep.shape) == 1:
+            timestep = timestep[:,None] 
+        for key in model_input_dict.keys():
+            #print(key)
+            #print(model_input_dict[key].shape)
+            #print(model_input_dict[key].shape)
+            model_input_dict_1[key] = model_input_dict[key][np.where(timestep < self.timestep_switch)[0],:]#.unsqueeze(1)
+            model_input_dict_2[key] = model_input_dict[key][np.where(timestep >= self.timestep_switch)[0],:]#.unsqueeze(1)
+            # add extra dimension at dim 1
+            # check if the keys dim at 1 is 1
+            #print(model_input_dict_1[key].shape)
+            #print(model_input_dict_2[key].shape)
+            #if len(model_input_dict_1[key].shape) != 2 or model_input_dict_1[key].shape[1] != 1:
+            #        model_input_dict_1[key] = np.expand_dims(model_input_dict_1[key], axis=1)
+            #if len(model_input_dict_2[key].shape) != 2 or model_input_dict_2[key].shape[1] != 1:
+            #        model_input_dict_2[key] = np.expand_dims(model_input_dict_2[key], axis=1)
+            #print(model_input_dict_1[key].shape)
+            #print(model_input_dict_2[key].shape)
+        # Use to check proper splitting
+        #print(model_input_dict_1['lidar_occupancy'].shape)
+        #print(model_input_dict_2['lidar_occupancy'].shape)
+        # supply the model_input_dicts to the corresponding agents
+        # split the actions according to the timestep
+        #print(timestep)
+        if actions is not None:
+            actions_1 = actions[np.where(timestep < self.timestep_switch)[0],:]
+            actions_2 = actions[np.where(timestep >= self.timestep_switch)[0],:]
+        else:
+            actions_1 = None
+            actions_2 = None
+        action1 = np.zeros((0,2))
+        action2 = np.zeros((0,2))
+        log_prob1 = np.zeros((0))
+        log_prob2 = np.zeros((0))
+
+        #print(model_input_dict_1)
+        #print(model_input_dict_2)
+        if model_input_dict_1['lidar_occupancy'].shape[0] != 0:
+            #print("Using agent 1")
+            #print(model_input_dict_1)
+            # if non empty print using 1
+            #print("using agent 1")
+            _, action1, log_prob1 = self.Agent1(model_input_dict_1, actions= actions_1)
+        if model_input_dict_2['lidar_occupancy'].shape[0] != 0:
+            #print("Using agent 2")
+            
+            _, action2, log_prob2 = self.Agent2(model_input_dict_2, actions= actions_2)
+        # concatenate the actions and log_probs according to the timesteps
+        #print(action1.shape)
+        return_actions = np.zeros((len(action1)+len(action2), 2))
+        return_actions[np.where(timestep < self.timestep_switch)[0],:] = action1
+        return_actions[np.where(timestep >= self.timestep_switch)[0],:] = action2
+        return_log_probs = np.zeros((len(log_prob1)+len(log_prob2)))
+        #print(np.where(timestep < self.timestep_switch))
+        return_log_probs[np.where(timestep < self.timestep_switch)[0]] = log_prob1
+        return_log_probs[np.where(timestep >= self.timestep_switch)[0]] = log_prob2
+
+
+        return _ , return_actions, return_log_probs
+    def reset(self):
+        self.Agent1.reset()
+        self.Agent2.reset()
 """
 @input lidar rays need to be already normalized
 """
@@ -147,24 +236,25 @@ class StochasticContinousFTGAgent(BaseAgent):
 
         return result
 
-
+    # use numpy batches
     def compute_target(self, scans_batch):
         assert scans_batch.ndim == 2, "Scans should be a 2D array with shape (batches, dim)"
         horizon = self.horizon
         og_scans = scans_batch.copy()
+        scans = scans_batch.copy()
         # block 15% of the left and rightmost scans
-        block_length = int(len(scans_batch[0])*0.15)
-        scans_batch[:,:block_length] = -1.0
-        scans_batch[:,-block_length:] = -1.0
+        block_length = int(len(scans[0])*0.15)
+        scans[:,:block_length] = -1.0
+        scans[:,-block_length:] = -1.0
         # now lets iterate over the horizon
         #scans_finished_indices = np.zeros(len(scans_batch))
-        scans_done = np.zeros(len(scans_batch))
-        scans_processed = np.zeros_like(scans_batch) - 1.0
+        scans_done = np.zeros(len(scans))
+        scans_processed = np.zeros_like(scans) - 1.0
 
         while horizon > 0.05:
             #print(horizon)
             #print("done:", scans_done)
-            scans_temp = scans_batch.copy()
+            scans_temp = scans.copy()
             scans_missing_indices = np.where(scans_done == 0.0)[0]
 
             current_scan = scans_temp[scans_missing_indices] #= -1.0
@@ -292,19 +382,21 @@ class StochasticContinousFTGAgent(BaseAgent):
         return target_angle, target_speed
     
     # use the prev action from the model_input_dict to make this stateless
-    def __call__(self, model_input_dict, actions=None, std=None):
+    def __call__(self, model_input_dict, actions=None, std=None, current_timestep=None):
         std_angle = self.std
         std_speed = self.std
+        # safety copy to ensure no funky business
+        model_input_dict_ = copy.deepcopy(model_input_dict)
         action =actions
         # Asserting the shape of action if it's not None
         if action is not None:
             assert action.ndim == 2 and action.shape[1] == 2, "Action should be a 2D array with shape (batches, 2)"
-        assert "lidar_occupancy" in model_input_dict
-        assert len(model_input_dict["lidar_occupancy"].shape) == 2, "Lidar occupancy should be a 2D array"
-        assert "previous_action" in model_input_dict
-        assert len(model_input_dict["previous_action"].shape) == 3, "Previous action should be a 3D (batch,1,2) array, yes weird TODO!"
-        scans = model_input_dict['lidar_occupancy']
-        prev_actions = model_input_dict['previous_action']
+        assert "lidar_occupancy" in model_input_dict_
+        assert len(model_input_dict_["lidar_occupancy"].shape) == 2, f"Lidar occupancy should be a 2D array, is {model_input_dict_['lidar_occupancy'].shape}"
+        assert "previous_action" in model_input_dict_
+        assert len(model_input_dict_["previous_action"].shape) == 3, "Previous action should be a 3D (batch,1,2) array, yes weird TODO!"
+        scans = model_input_dict_['lidar_occupancy']
+        prev_actions = model_input_dict_['previous_action']
         current_angles = prev_actions[:,0, 0]
         #print(prev_actions.shape)
         #print(prev_actions[:10])
@@ -322,9 +414,10 @@ class StochasticContinousFTGAgent(BaseAgent):
         means = np.vstack((delta_angles, delta_speeds)).T / 0.05
         means = np.clip(means, -1.0, 1.0)
 
-        a = (means - 1.0) / std_angle
-        b = (means + 1.0) / std_angle
-
+        a = (- 1.0 - means) / std_angle
+        b = (1.0 - means ) / std_angle
+        #print(a)
+        #print(b)
         if not self.deterministic:
             targets = np.random.normal(means, std_angle)
         else:
@@ -332,17 +425,33 @@ class StochasticContinousFTGAgent(BaseAgent):
 
         targets = np.clip(targets, -1.0, 1.0)
 
+        #r = truncnorm.rvs(a[0,0], b[0,0], size=1000)
+        #print(a[0,0])
+        #print(b[0,0])
+        # plot r
+        #import matplotlib.pyplot as plt
         dist = truncnorm(a, b, loc=means, scale=std_angle)
-
+        # sample and plot
+        #dis2t = truncnorm(a[0,0], b[0,0], loc=means[0,0], scale=std_angle)
+        #samples = dis2t.rvs(size=1000)
+        #plt.hist(samples, density=True, bins='auto', histtype='stepfilled', alpha=0.2)
+        #plt.show()
         if action is not None:
             assert (action <= 1.0).all() and (action >= -1.0).all(), "Action should be between -1 and 1"
             log_probs = dist.logpdf(action).sum(axis=1)
         else:
-            log_probs = dist.logpdf(targets).sum(axis=1)
+            #print("targets",targets)
+            log_probs = dist.logpdf(targets) #.sum(axis=1)
+            #print("not added log_probs", log_probs)
+            #print(log_probs)
+            log_probs = np.sum(log_probs, axis=1)
 
         # log_probs = 1.0
         #print("mean", means)
         #print("target", targets)
+        assert (log_probs != -np.inf).all()
+        # also assert no log_prob is nan
+        assert (log_probs != np.nan).all()
         return None, targets, log_probs
 
 eval_config = {
@@ -359,7 +468,10 @@ eval_config = {
 
 if __name__ == "__main__":
     from f110_sim_env.base_env import make_base_env
-    agent = StochasticContinousFTGAgent(current_speed = 0.0, deterministic=False, std=0.1, speed_multiplier=0.5)
+    import matplotlib.pyplot as plt
+    agent1 = StochasticContinousFTGAgent(current_speed = 0.0, deterministic=False, speed_multiplier=1.0)
+    agent2 = StochasticContinousFTGAgent(current_speed = 0.0, deterministic=False, speed_multiplier=0.5)
+    agent = DoubleAgentWrapper(agent1, agent2, timestep_switch=250)
     rays = np.ones((1,54,)) * 0.1
     rays[:,:10] += 0.1
     #rays += 0.5
@@ -392,6 +504,8 @@ if __name__ == "__main__":
         done = False
         truncated = False
         j = 0
+        timestep = 0
+        vels = []
         while not done and not truncated:
             obs, reward, done, truncated, info = eval_env.step(action[2])
             fake_lidar2 = np.zeros((1,54,))
@@ -404,14 +518,28 @@ if __name__ == "__main__":
             #print(fake_lidar.shape)
             obs_dict = {'lidar_occupancy':  fake_lidar}#,info["observations"]["lidar_occupancy"]])}
             # print(fake_lidar)
-            obs_dict['previous_action'] = np.array([info["observations"]["previous_action"]])
-            _, action , log_prob = agent(model_input_dict=obs_dict)
-            print("prev_action", info["observations"]["previous_action"])
-            print("action:", action)
+            prev_action = np.array([info["observations"]["previous_action"]])
+            obs_dict['previous_action'] = np.concatenate((prev_action, prev_action,prev_action), axis=0)
+            
+            #print(obs_dict)
+            timestep += 1
+            timestep_array = np.array([timestep,timestep,timestep])
+            _, action , log_prob = agent(timestep_array, model_input_dict=obs_dict)
+            #print(obs_dict)
+            #print("prev_action", info["observations"]["previous_action"])
+            #print("action:", action)
+            # print(log_prob)
+            assert (log_prob != -np.inf).all()
 
-            _, _ , test_prob = agent(model_input_dict=obs_dict, actions=action)
+            _, _ , test_prob = agent(timestep_array,model_input_dict=obs_dict, actions=action)
+            # assert logprobs are all larger than - inf
+            # plot the lin vels_x from the info dict
+           
+            vels.append(info["observations"]["linear_vels_x"])
             assert((log_prob == test_prob).all())
             #print(log_prob)
             # rescale action to be between -1 and 1, 0.05 is one
             #action = action/0.05
             eval_env.render()
+        plt.plot(vels)
+        plt.show()

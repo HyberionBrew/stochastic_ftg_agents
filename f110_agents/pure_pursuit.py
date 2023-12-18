@@ -1,4 +1,4 @@
-from ftg_agents.agents_numpy import BaseAgent
+from agents.agents_numpy import BaseAgent
 import numpy as np
 
 """

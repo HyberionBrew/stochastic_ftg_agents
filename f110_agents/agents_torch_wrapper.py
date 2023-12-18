@@ -1,4 +1,4 @@
-from ftg_agents.agents_numpy import StochasticContinousFTGAgent
+from agents.agents_numpy import StochasticContinousFTGAgent
 import torch
 class StochasticContinousFTGTorchWrapper(StochasticContinousFTGAgent):
     def __init__(self, *args, **kwargs):
