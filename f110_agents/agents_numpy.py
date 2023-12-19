@@ -198,9 +198,14 @@ class StochasticContinousFTGAgent(BaseAgent):
         print("------")
         """
         max_ray = gap  #[0] # TODO gap is a value of shape (batch, 1)
+        print(max_ray)
+        print(self.speed_multiplier)
+        print(self.max_speed)
         max_ray = np.clip(max_ray, 0.0, self.speed_multiplier)
         speed = 0.0 + (max_ray / self.speed_multiplier) * self.max_speed
         # print(max_ray)
+        print(speed)
+        print("---")
         return speed
     
     def reset(self):
@@ -394,19 +399,27 @@ class StochasticContinousFTGAgent(BaseAgent):
         assert "lidar_occupancy" in model_input_dict_
         assert len(model_input_dict_["lidar_occupancy"].shape) == 2, f"Lidar occupancy should be a 2D array, is {model_input_dict_['lidar_occupancy'].shape}"
         assert "previous_action" in model_input_dict_
-        assert len(model_input_dict_["previous_action"].shape) == 3, "Previous action should be a 3D (batch,1,2) array, yes weird TODO!"
+        #assert len(model_input_dict_["previous_action"].shape) == 3, "Previous action should be a 3D (batch,1,2) array, yes weird TODO!"
+        # assert len(model_input_dict_['previous_action'].shape) == 3, "Previous action should be a 3D (batch,1,2) array, yes weird TODO!"
         scans = model_input_dict_['lidar_occupancy']
         prev_actions = model_input_dict_['previous_action']
-        current_angles = prev_actions[:,0, 0]
+        current_angles = prev_actions[:, 0]
         #print(prev_actions.shape)
         #print(prev_actions[:10])
-        current_velocities = prev_actions[:,0, 1]
-
+        current_velocities = prev_actions[:, 1]
+        
         target_angles, target_speeds = self.compute_target(scans)  # Adapted for batch processing
         #print(target_angles)
-        #print(target_speeds)
+        print("speed", target_speeds)
+        print("current", current_velocities)
+        print("prev acts", prev_actions)
+        print("target", target_speeds)
+        #assert target_speeds >= 0.0, "Speed should be >= 0.0"
+        #assert current_velocities >= 0.0, "Velocity should be >= 0.0"
+        current_velocities = np.clip(current_velocities, 0.0, self.max_speed)
         delta_angles = target_angles - current_angles
         delta_speeds = target_speeds - current_velocities 
+        print("delta", delta_speeds)
         # TODO! for now
         delta_angles, new_current_angles = self.get_delta_angle(target_angles, current_angles)  # Adapted for batch processing
         delta_speeds, new_current_velocities = self.get_delta_speed(target_speeds, current_velocities)  # Adapted for batch processing
@@ -520,7 +533,7 @@ if __name__ == "__main__":
             # print(fake_lidar)
             prev_action = np.array([info["observations"]["previous_action"]])
             obs_dict['previous_action'] = np.concatenate((prev_action, prev_action,prev_action), axis=0)
-            
+            print("current_velocity:", )
             #print(obs_dict)
             timestep += 1
             timestep_array = np.array([timestep,timestep,timestep])
