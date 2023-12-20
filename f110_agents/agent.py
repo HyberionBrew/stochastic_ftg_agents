@@ -1,6 +1,8 @@
 # import for dealing with .json
 import json
 from f110_agents.agents_numpy import StochasticContinousFTGAgent
+from f110_agents.pure_pursuit import StochasticContinousPPAgent
+from f110_agents.agents_numpy import DoubleAgentWrapper
 class Agent(object):
     def __init__(self):
         pass
@@ -13,4 +15,14 @@ class Agent(object):
             parameters = data.get('agent_parameters')
             print("Agent parameters", parameters)
             return StochasticContinousFTGAgent(**parameters)
-        
+        if agent_class == "PPAgent":
+            parameters = data.get('agent_parameters')
+            print("Agent parameters", parameters)
+            return StochasticContinousPPAgent(**parameters)
+
+        if agent_class == "SwitchingAgent":
+            parameters = data.get('agent_parameters')
+            # need to call load on the parameters agent1 and agent2
+            parameters['agent1'] = self.load(parameters['agent1'])
+            parameters['agent2'] = self.load(parameters['agent2'])
+            return DoubleAgentWrapper(parameters['agent1'], parameters['agent2'], parameters['switching_timestep'])

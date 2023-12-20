@@ -66,25 +66,28 @@ class BaseAgent(object):
 class SwitchingAgentWrapper(object):
     def __init__(self, Agent1, Agent2):
         self.agent = DoubleAgentWrapper(Agent1, Agent2, timestep_switch=1)
+        
     def __str__(self):
         return f"SwitchingAgentWrapper_{self.agent}"
-    def __call__(self, timestep, model_input_dict,actions=None, std=None):
+    def __call__(self, model_input_dict,actions=None, std=None, timestep = None):
         # set all even timesteps to 0 all odd ones to 1
         timestep = timestep % 2
-        return self.agent(timestep, model_input_dict, actions=actions, std=std)
+        return self.agent(model_input_dict, actions=actions, std=std, timestep=timestep)
 
 
 class DoubleAgentWrapper(object):
     def __init__(self, Agent1, Agent2, timestep_switch = 200):
         self.Agent1 = Agent1
         self.Agent2 = Agent2
+        self.subsample = self.Agent1.subsample
         self.timestep_switch = timestep_switch
     def __str__(self):
         return f"AgentWrapper_{self.Agent1}_{self.Agent2}_{self.timestep_switch}"
     
-    def __call__(self, timestep, model_input_dict,actions=None, std=None):
+    def __call__(self, model_input_dict,actions=None, std=None, timestep = None):
         # split the model_input dict according to the timestep
         # assert all timesteps smaller than 1000
+        assert timestep is not None, "Timestep should not be None"
         assert (timestep < 1002).all(), f"Timestep should be smaller than 1000, are {timestep.max()}"
         model_input_dict_1 = {}
         model_input_dict_2 = {}
@@ -95,8 +98,8 @@ class DoubleAgentWrapper(object):
             #print(key)
             #print(model_input_dict[key].shape)
             #print(model_input_dict[key].shape)
-            model_input_dict_1[key] = model_input_dict[key][np.where(timestep < self.timestep_switch)[0],:]#.unsqueeze(1)
-            model_input_dict_2[key] = model_input_dict[key][np.where(timestep >= self.timestep_switch)[0],:]#.unsqueeze(1)
+            model_input_dict_1[key] = model_input_dict[key][np.where(timestep < self.timestep_switch)[0]]#.unsqueeze(1)
+            model_input_dict_2[key] = model_input_dict[key][np.where(timestep >= self.timestep_switch)[0]]#.unsqueeze(1)
             # add extra dimension at dim 1
             # check if the keys dim at 1 is 1
             #print(model_input_dict_1[key].shape)
@@ -155,7 +158,7 @@ class DoubleAgentWrapper(object):
 @input lidar rays need to be already normalized
 """
 class StochasticContinousFTGAgent(BaseAgent):
-    def __init__(self, current_speed=0.0, deterministic=False, gap_blocker = 2, max_speed=2.0, horizon=0.2, subsample=20,gap_size_max_speed=10, speed_multiplier=2.0, std=0.3):
+    def __init__(self, current_speed=0.0, deterministic=False, gap_blocker = 2, max_speed=2.0, horizon=0.2, subsample=20,gap_size_max_speed=10, speed_multiplier=2.0, std=0.3,):
         # initalize parent
         super(StochasticContinousFTGAgent, self).__init__()
         self.deterministic = deterministic
@@ -198,14 +201,9 @@ class StochasticContinousFTGAgent(BaseAgent):
         print("------")
         """
         max_ray = gap  #[0] # TODO gap is a value of shape (batch, 1)
-        #print(max_ray)
-        #print(self.speed_multiplier)
-        #print(self.max_speed)
         max_ray = np.clip(max_ray, 0.0, self.speed_multiplier)
         speed = 0.0 + (max_ray / self.speed_multiplier) * self.max_speed
         # print(max_ray)
-        #print(speed)
-        #print("---")
         return speed
     
     def reset(self):
@@ -387,7 +385,7 @@ class StochasticContinousFTGAgent(BaseAgent):
         return target_angle, target_speed
     
     # use the prev action from the model_input_dict to make this stateless
-    def __call__(self, model_input_dict, actions=None, std=None, current_timestep=None):
+    def __call__(self, model_input_dict, actions=None, std=None, timestep=None):
         std_angle = self.std
         std_speed = self.std
         # safety copy to ensure no funky business
