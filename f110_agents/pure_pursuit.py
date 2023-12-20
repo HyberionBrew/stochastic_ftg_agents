@@ -1,4 +1,4 @@
-from agents.agents_numpy import BaseAgent
+from f110_agents.agents_numpy import BaseAgent
 import numpy as np
 
 """
@@ -26,7 +26,7 @@ class Track():
 
 
 class StochasticContinousPPAgent(BaseAgent):
-    def __init__(self, deterministic=True, raceline_file='raceline.csv', fixed_speed = None, **kwargs):
+    def __init__(self, deterministic=True, raceline_file='raceline.csv', fixed_speed = None, resetting=True, num_starting_points=2,**kwargs):
         # initalize parent class
         super().__init__(**kwargs)
         if not deterministic:
@@ -34,10 +34,34 @@ class StochasticContinousPPAgent(BaseAgent):
         self.deterministic = deterministic
         self.raceline_file = raceline_file
         self.fixed_speed = fixed_speed
-        self.track = Track('/sim_ws/src/f1tenth_gym_ros/maps/Infsaal/Infsaal_centerline.csv')
+        self.track = Track(raceline_file)
         self.current_track_point = None
         self.subsample = 20
+        self.resetting = resetting
+        self.starting_points_progress = np.linspace(0, 1, num_starting_points)
     
+    def distance_point_to_line(self,px, py, x1, y1, x2, y2):
+        """
+        Calculate the distance of point (px, py) to the line formed by points (x1, y1) and (x2, y2).
+        Only for reseting agent, does not support batch
+        """
+        # assert not batch
+        """
+        print(px, py, x1, y1, x2, y2)
+        assert type(px) == float 
+        assert type(py) == float
+        assert type(x1) == float
+        assert type(y1) == float
+        assert type(x2) == float
+        assert type(y2) == float
+        """
+
+        A = y2 - y1
+        B = x1 - x2
+        C = x2 * y1 - x1 * y2
+
+        distance = np.abs(A * px + B * py + C) / np.sqrt(A**2 + B**2)
+        return distance
     def find_closest_track_point(self, x, y):
         """
         Find the closest point on the raceline to the given x, y coordinates.
@@ -55,11 +79,13 @@ class StochasticContinousPPAgent(BaseAgent):
 
         # Calculate distances using broadcasting
         distances = np.sqrt((xs[:, None] - x_reshaped) ** 2 + (ys[:, None] - y_reshaped) ** 2)
-        
         # Find the index of the minimum distance for each point
         return np.argmin(distances, axis=0)
+    def __str__(self):
+        return "pure_pursuit"
+    def reset(self):
+        self.current_track_point = None
 
- 
     def find_next_track_point(self, current_track_point, x, y, lookahead_distance, max_lookahead_indices=20):
         """
         Find the next target point on the raceline based on the agent's current position and a lookahead distance.
@@ -79,13 +105,14 @@ class StochasticContinousPPAgent(BaseAgent):
 
         # Generate all indices to look ahead within the max_lookahead_indices range
         indices_ahead = (current_track_point[:, None] + np.arange(max_lookahead_indices)) % track_length
-        # print("indiecs ahead shape", indices_ahead.shape)
+        #print("indiecs ahead shape", indices_ahead.shape)
         # Calculate distances for all these indices
         distances = np.sqrt((xs[indices_ahead] - x) ** 2 + (ys[indices_ahead] - y) ** 2)
-        
+        #print(distances)
         # Find the first index where distance is greater than lookahead_distance
         #while True:
         first_valid_indices = np.argmax(distances > lookahead_distance, axis=1)
+        #print("valids", first_valid_indices)
         #    if np.all(first_valid_indices):
         #        break
         #    lookahead_distance *= 2
@@ -100,7 +127,7 @@ class StochasticContinousPPAgent(BaseAgent):
 
         #print(first_valid_indices.shape)
         #print(first_valid_indices)
-        return first_valid_indices
+        return ((current_track_point + first_valid_indices) % track_length)[0]
     
     def calculate_steering_angle(self, x, y, theta, next_track_point, lookahead_distance):
         """
@@ -138,29 +165,66 @@ class StochasticContinousPPAgent(BaseAgent):
 
         return steering_angle
 
-    def __call__(self, model_input_dict: dict, actions=None, std=None):
+    def __call__(self, model_input_dict: dict, actions=None, std=None, deaccelerate=False):
         # model input dict values have a batch dimension
         # extract the current position and orientation
         #print(model_input_dict)
-        # print("called")
         model_input_dict_ = model_input_dict.copy()
         x = model_input_dict_['poses_x']
         y = model_input_dict_['poses_y']
         theta_sin = model_input_dict_['theta_sin']
         theta_cos = model_input_dict_['theta_cos']
         theta = np.arctan2(theta_sin, theta_cos)
+        
         # find the current closest track point
-        if self.current_track_point is None:
+        if True:#self.current_track_point is None:
             self.current_track_point = self.find_closest_track_point(x,y)
+            # print(self.current_track_point)
+            # exit()
+        else: 
+            # this needs an insurance that the point is in front of the car
+            self.current_track_point = self.find_next_track_point(self.current_track_point,
+                                                                    x,
+                                                                    y,
+                                                                    0.0,
+                                                                    max_lookahead_indices=50)
+            self.current_track_point = self.current_track_point[0]
+            print("current_track point", self.current_track_point)
+            #exit()
+            # exit()
         # find the next track point
         lookahead = 1.0
         next_track_point = self.find_next_track_point(self.current_track_point, x, y, lookahead)
+        # print(self.current_track_point, next_track_point)
+        assert next_track_point.shape == self.current_track_point.shape
         # calculate the steering angle
         calculated_steering_angle = self.calculate_steering_angle(x,y,theta,next_track_point, lookahead)
-        #print(calculated_steering_angle)
-        speed = 0.0
+        #print("target, steering:", calculated_steering_angle)
+        speed = np.array([0.0])
+        reseting = False
         if self.fixed_speed is not None:
-            speed = 0.5
+            speed = np.array([self.fixed_speed])
+            if self.resetting:
+                # speed depends on the distance to the raceline and the angle to the next selected point
+                # if both are small we set the speed to 0.0
+                # check calculated steering angle
+                # print("calculated steering angle", calculated_steering_angle[0])
+                # check current progress
+                if deaccelerate:
+                    speed = np.array([0.0])
+                
+                """
+                line_first_point = self.track.centerline.xs[self.current_track_point], self.track.centerline.ys[self.current_track_point]
+                next_point = (self.current_track_point + 1) % len(self.track.centerline.xs)
+                line_second_point = self.track.centerline.xs[next_point], self.track.centerline.ys[next_point]
+                current_point = x, y
+                dist = self.distance_point_to_line(current_point[0][0], current_point[1][0], line_first_point[0][0], line_first_point[1][0], 
+                                                    line_second_point[0][0], 
+                                                    line_second_point[1][0])
+                if dist < 0.2 and abs(calculated_steering_angle) < 0.2:
+                    speed = np.array([0.0])
+                    reseting = True
+                """
         else:
             raise NotImplementedError
         
@@ -168,21 +232,29 @@ class StochasticContinousPPAgent(BaseAgent):
         # now compute delta action
         #print(model_input_dict_['previous_action'].shape)
         #print(model_input_dict_['previous_action'])
-        current_angle = model_input_dict_['previous_action'][:,0,1]
-        current_speed = model_input_dict_['previous_action'][:,0,0]
-
+        # print("model_input_dict_['previous_action'] inside", model_input_dict_['previous_action'])
+        current_angle = model_input_dict_['previous_action'][:,0]
+        current_speed = model_input_dict_['previous_action'][:,1]
+        #print("above, curr", current_speed)
         delta_angles, abs_angle = self.get_delta_angle(calculated_steering_angle, current_angle)
         delta_speeds, abs_speed = self.get_delta_speed(speed, current_speed)
-        print("target angle", abs_angle)
-        print("target speed", abs_speed)
+        #print("target angle", abs_angle)
+        #print("target speed", abs_speed)
+        #print("curr speed", current_speed)
+        #print("current_speed inside", delta_speeds + current_speed)
+        #print(delta_angles)
+        #print(delta_speeds)
         means = np.vstack((delta_angles, delta_speeds)).T / 0.05
         means = np.clip(means, -1.0, 1.0)
         actions = means
-        actions = np.zeros_like(means)
+        #actions = np.zeros_like(means)
 
         log_probs = np.ones((delta_angles.shape[0]))
-        return None, actions, log_probs
 
+        ## TODO! here we can add stochasticity!
+        return 0.0, actions, log_probs
+
+### this is deprecated ###
 eval_config = {
     "collision_penalty": -10.0,
     "progress_weight": 1.0,
@@ -198,7 +270,7 @@ eval_config = {
 
 if __name__ == "__main__":
     from f110_sim_env.base_env import make_base_env
-    agent = StochasticContinousPPAgent( deterministic=True, fixed_speed=0.5)
+    agent = StochasticContinousPPAgent(deterministic=True, fixed_speed=0.5)
     rays = np.ones((1,54,)) * 0.1
     rays[:,:10] += 0.1
     #rays += 0.5
