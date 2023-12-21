@@ -2,7 +2,7 @@ import numpy as np
 from typing import Tuple
 
 class Progress:
-    def __init__(self, track, lookahead: int = 20) -> None:
+    def __init__(self, track, lookahead: int = 200) -> None:
         # 
         xs = track.centerline.xs
         ys = track.centerline.ys
@@ -11,9 +11,10 @@ class Progress:
         self.centerline = np.vstack((self.centerline, self.centerline[0]))
 
         self.segment_vectors = np.diff(self.centerline, axis=0)
+        
         # print(segment_vectors.shape)
         self.segment_lengths = np.linalg.norm(self.segment_vectors, axis=1)
-        
+        assert (self.segment_lengths > 0.0).all()
         # Extend segment lengths to compute cumulative distance
         self.cumulative_lengths = np.hstack(([0], np.cumsum(self.segment_lengths)))
         self.previous_closest_idx = 0
@@ -38,7 +39,12 @@ class Progress:
         #print(self.previous_closest_idx)
         def projected_distance(pose):
             rel_pose = pose - self.centerline[:-1]
+            
             t = np.sum(rel_pose * self.segment_vectors, axis=1) / np.sum(self.segment_vectors**2, axis=1)
+            #print("sum of segment vectors")
+            #print(self.segment_vectors)
+            #print(np.sum(self.segment_vectors**2, axis=1))
+            #print('i')
             t = np.clip(t, 0, 1)
             projections = self.centerline[:-1] + t[:, np.newaxis] * self.segment_vectors
             distances = np.linalg.norm(pose - projections, axis=1)
@@ -72,7 +78,10 @@ class Progress:
         progress =  self.distance_along_centerline_np(pose)
         # print(self.cumulative_lengths.shape)
         # print(self.cumulative_lengths[-1])
+        #print('progress 1', progress)
         progress = progress / (self.cumulative_lengths[-1] + self.segment_lengths[-1])
+        #print('progress 2', progress)
+        #print(self.segment_vectors)
         # clip between 0 and 1 (it can sometimes happen that its slightly above 1)
         # print("progress", progress)
         return np.clip(progress, 0, 1)

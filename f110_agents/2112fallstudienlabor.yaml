@@ -1,0 +1,12 @@
+image: 2112fallstudienlabor.pgm
+resolution: 0.05
+origin:
+- -5.148781810087317
+- -3.851082282019106
+- 0.0
+negate: 0
+occupied_thresh: 0.65
+free_thresh: 0.25
+origin_orientation:
+  x: -0.8556941718430745
+  y: -0.5174818685459374

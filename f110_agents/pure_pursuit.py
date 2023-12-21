@@ -86,7 +86,7 @@ class StochasticContinousPPAgent(BaseAgent):
     def reset(self):
         self.current_track_point = None
 
-    def find_next_track_point(self, current_track_point, x, y, lookahead_distance, max_lookahead_indices=20):
+    def find_next_track_point(self, current_track_point, x, y, lookahead_distance, max_lookahead_indices=200):
         """
         Find the next target point on the raceline based on the agent's current position and a lookahead distance.
 
@@ -111,6 +111,8 @@ class StochasticContinousPPAgent(BaseAgent):
         #print(distances)
         # Find the first index where distance is greater than lookahead_distance
         #while True:
+        # dirty fix, set the last distance to high number so we always find one
+        distances[-1] = 2.0
         first_valid_indices = np.argmax(distances > lookahead_distance, axis=1)
         #print("valids", first_valid_indices)
         #    if np.all(first_valid_indices):
@@ -195,6 +197,7 @@ class StochasticContinousPPAgent(BaseAgent):
         # find the next track point
         lookahead = 1.0
         next_track_point = self.find_next_track_point(self.current_track_point, x, y, lookahead)
+        # next_track_point += 200
         # print(self.current_track_point, next_track_point)
         assert next_track_point.shape == self.current_track_point.shape
         # calculate the steering angle
@@ -252,7 +255,7 @@ class StochasticContinousPPAgent(BaseAgent):
         log_probs = np.ones((delta_angles.shape[0]))
 
         ## TODO! here we can add stochasticity!
-        return 0.0, actions, log_probs
+        return [next_track_point], actions, log_probs
 
 ### this is deprecated ###
 eval_config = {
