@@ -104,6 +104,7 @@ class StochasticContinousPPAgent(BaseAgent):
         track_length = len(xs)
 
         # Generate all indices to look ahead within the max_lookahead_indices range
+        #print("current track point", current_track_point)
         indices_ahead = (current_track_point[:, None] + np.arange(max_lookahead_indices)) % track_length
         #print("indiecs ahead shape", indices_ahead.shape)
         # Calculate distances for all these indices
@@ -112,7 +113,9 @@ class StochasticContinousPPAgent(BaseAgent):
         # Find the first index where distance is greater than lookahead_distance
         #while True:
         # dirty fix, set the last distance to high number so we always find one
-        distances[-1] = 2.0
+        distances[:,-1] = 2.0
+        #print(distances)
+        #print(lookahead_distance)
         first_valid_indices = np.argmax(distances > lookahead_distance, axis=1)
         #print("valids", first_valid_indices)
         #    if np.all(first_valid_indices):
@@ -191,7 +194,7 @@ class StochasticContinousPPAgent(BaseAgent):
                                                                     0.0,
                                                                     max_lookahead_indices=50)
             self.current_track_point = self.current_track_point[0]
-            print("current_track point", self.current_track_point)
+            #print("current_track point", self.current_track_point)
             #exit()
             # exit()
         # find the next track point
