@@ -1,6 +1,6 @@
 from f110_agents.agents_numpy import BaseAgent
 import numpy as np
-
+from scipy.stats import truncnorm
 """
 a pure pursuit agent to drive back to the raceline 
 """
@@ -26,11 +26,11 @@ class Track():
 
 
 class StochasticContinousPPAgent(BaseAgent):
-    def __init__(self, deterministic=True, raceline_file='raceline.csv', fixed_speed = None, resetting=True, num_starting_points=2,**kwargs):
+    def __init__(self, deterministic=True, raceline_file='raceline.csv', fixed_speed = None, resetting=True, lookahead_points=200, num_starting_points=2,std=0.3, max_delta_steering=0.05, **kwargs):
         # initalize parent class
         super().__init__(**kwargs)
-        if not deterministic:
-            raise NotImplementedError
+        #if not deterministic:
+        #    raise NotImplementedError
         self.deterministic = deterministic
         self.raceline_file = raceline_file
         self.fixed_speed = fixed_speed
@@ -39,7 +39,10 @@ class StochasticContinousPPAgent(BaseAgent):
         self.subsample = 20
         self.resetting = resetting
         self.starting_points_progress = np.linspace(0, 1, num_starting_points)
-    
+        self.std = std
+        self.lookahead_points = lookahead_points
+        self.max_delta_steering = max_delta_steering
+
     def distance_point_to_line(self,px, py, x1, y1, x2, y2):
         """
         Calculate the distance of point (px, py) to the line formed by points (x1, y1) and (x2, y2).
@@ -170,7 +173,7 @@ class StochasticContinousPPAgent(BaseAgent):
 
         return steering_angle
 
-    def __call__(self, model_input_dict: dict, actions=None, std=None, deaccelerate=False):
+    def __call__(self, model_input_dict: dict, action=None, std=None, deaccelerate=False, **kwargs):
         # model input dict values have a batch dimension
         # extract the current position and orientation
         #print(model_input_dict)
@@ -192,14 +195,14 @@ class StochasticContinousPPAgent(BaseAgent):
                                                                     x,
                                                                     y,
                                                                     0.0,
-                                                                    max_lookahead_indices=50)
+                                                                    max_lookahead_indices=self.lookahead_points)
             self.current_track_point = self.current_track_point[0]
             #print("current_track point", self.current_track_point)
             #exit()
             # exit()
         # find the next track point
         lookahead = 1.0
-        next_track_point = self.find_next_track_point(self.current_track_point, x, y, lookahead)
+        next_track_point = self.find_next_track_point(self.current_track_point, x, y, lookahead, max_lookahead_indices=self.lookahead_points)
         # next_track_point += 200
         # print(self.current_track_point, next_track_point)
         assert next_track_point.shape == self.current_track_point.shape
@@ -217,6 +220,7 @@ class StochasticContinousPPAgent(BaseAgent):
                 # print("calculated steering angle", calculated_steering_angle[0])
                 # check current progress
                 if deaccelerate:
+                    print("deaccelerating")
                     speed = np.array([0.0])
                 
                 """
@@ -241,7 +245,7 @@ class StochasticContinousPPAgent(BaseAgent):
         # print("model_input_dict_['previous_action'] inside", model_input_dict_['previous_action'])
         current_angle = model_input_dict_['previous_action'][:,0]
         current_speed = model_input_dict_['previous_action'][:,1]
-        #print("above, curr", current_speed)
+        
         delta_angles, abs_angle = self.get_delta_angle(calculated_steering_angle, current_angle)
         delta_speeds, abs_speed = self.get_delta_speed(speed, current_speed)
         #print("target angle", abs_angle)
@@ -250,15 +254,51 @@ class StochasticContinousPPAgent(BaseAgent):
         #print("current_speed inside", delta_speeds + current_speed)
         #print(delta_angles)
         #print(delta_speeds)
-        means = np.vstack((delta_angles, delta_speeds)).T / 0.05
+        means = np.vstack((delta_angles, delta_speeds)).T / self.max_delta_steering
         means = np.clip(means, -1.0, 1.0)
-        actions = means
+        # actions = means
         #actions = np.zeros_like(means)
+        ####### JUST copied do better #######
+        a = (- 1.0 - means) / self.std
+        b = (1.0 - means ) / self.std
+        #print(a)
+        #print(b)
+        if not self.deterministic:
+            targets = np.random.normal(means, self.std)
+        else:
+            targets = means
 
-        log_probs = np.ones((delta_angles.shape[0]))
+        targets = np.clip(targets, -1.0, 1.0)
 
+        #r = truncnorm.rvs(a[0,0], b[0,0], size=1000)
+        #print(a[0,0])
+        #print(b[0,0])
+        # plot r
+        #import matplotlib.pyplot as plt
+        dist = truncnorm(a, b, loc=means, scale=self.std)
+        # sample and plot
+        #dis2t = truncnorm(a[0,0], b[0,0], loc=means[0,0], scale=std_angle)
+        #samples = dis2t.rvs(size=1000)
+        #plt.hist(samples, density=True, bins='auto', histtype='stepfilled', alpha=0.2)
+        #plt.show()
+        if action is not None:
+            assert (action <= 1.0).all() and (action >= -1.0).all(), "Action should be between -1 and 1"
+            log_probs = dist.logpdf(action).sum(axis=1)
+        else:
+            #print("targets",targets)
+            log_probs = dist.logpdf(targets) #.sum(axis=1)
+            #print("not added log_probs", log_probs)
+            #print(log_probs)
+            log_probs = np.sum(log_probs, axis=1)
+
+        # log_probs = 1.0
+        #print("mean", means)
+        #print("target", targets)
+        assert (log_probs != -np.inf).all()
+        # also assert no log_prob is nan
+        assert (log_probs != np.nan).all()
         ## TODO! here we can add stochasticity!
-        return [next_track_point], actions, log_probs
+        return [next_track_point], targets, log_probs
 
 ### this is deprecated ###
 eval_config = {
