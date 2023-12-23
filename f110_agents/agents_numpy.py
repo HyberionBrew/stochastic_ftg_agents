@@ -158,7 +158,7 @@ class DoubleAgentWrapper(object):
 @input lidar rays need to be already normalized
 """
 class StochasticContinousFTGAgent(BaseAgent):
-    def __init__(self, current_speed=0.0, deterministic=False, gap_blocker = 2, max_speed=2.0, horizon=0.2, subsample=20,gap_size_max_speed=10, speed_multiplier=2.0, std=0.3,):
+    def __init__(self, current_speed=0.0, deterministic=False, gap_blocker = 2, max_speed=2.0, horizon=0.2, subsample=20,gap_size_max_speed=10, speed_multiplier=2.0, std=0.3,max_delta=0.5):
         # initalize parent
         super(StochasticContinousFTGAgent, self).__init__()
         self.deterministic = deterministic
@@ -166,7 +166,7 @@ class StochasticContinousFTGAgent(BaseAgent):
         self.subsample = 20
         self.current_angle = 0.0
         self.current_velocity = current_speed
-        self.max_change = 0.05
+        self.max_change = max_delta
         self.exp_decay = 0.1
         self.gap_max = gap_size_max_speed
         self.gap_blocker = gap_blocker
@@ -174,6 +174,7 @@ class StochasticContinousFTGAgent(BaseAgent):
         self.speed_multiplier = speed_multiplier# higher values slower agent
         self.std = std
         self.max_speed = max_speed 
+        self.max_delta = max_delta
 
  
     
@@ -204,6 +205,7 @@ class StochasticContinousFTGAgent(BaseAgent):
         max_ray = np.clip(max_ray, 0.0, self.speed_multiplier)
         speed = 0.0 + (max_ray / self.speed_multiplier) * self.max_speed
         # print(max_ray)
+        speed = np.clip(speed, 0.5,self.max_speed)
         return speed
     
     def reset(self):
@@ -425,12 +427,13 @@ class StochasticContinousFTGAgent(BaseAgent):
         current_velocities = np.clip(current_velocities, 0.0, self.max_speed)
         delta_angles = target_angles - current_angles
         delta_speeds = target_speeds - current_velocities 
-        #print("delta", delta_speeds)
+        print("delta , target, current", delta_angles, target_angles, current_angles)
+        
         # TODO! for now
         delta_angles, new_current_angles = self.get_delta_angle(target_angles, current_angles)  # Adapted for batch processing
         delta_speeds, new_current_velocities = self.get_delta_speed(target_speeds, current_velocities)  # Adapted for batch processing
 
-        means = np.vstack((delta_angles, delta_speeds)).T / 0.05
+        means = np.vstack((delta_angles, delta_speeds)).T / self.max_delta #/ 0.15
         means = np.clip(means, -1.0, 1.0)
 
         a = (- 1.0 - means) / std_angle
@@ -471,7 +474,9 @@ class StochasticContinousFTGAgent(BaseAgent):
         assert (log_probs != -np.inf).all()
         # also assert no log_prob is nan
         assert (log_probs != np.nan).all()
-        return None, targets, log_probs
+        #targets = np.array([[target_angles[0],targets[:,1][0]]])
+        #print(targets)
+        return [delta_angles, target_angles, current_angles], targets, log_probs
 
 eval_config = {
     "collision_penalty": -10.0,

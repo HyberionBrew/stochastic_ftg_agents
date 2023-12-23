@@ -26,7 +26,7 @@ class Track():
 
 
 class StochasticContinousPPAgent(BaseAgent):
-    def __init__(self, deterministic=True, raceline_file='raceline.csv', fixed_speed = None, resetting=True, lookahead_points=200, num_starting_points=2,std=0.3, max_delta_steering=0.05, **kwargs):
+    def __init__(self, deterministic=True, raceline_file='raceline.csv', fixed_speed = None, resetting=True, lookahead_points=200, num_starting_points=2,std=0.3, max_delta=0.05, **kwargs):
         # initalize parent class
         super().__init__(**kwargs)
         #if not deterministic:
@@ -41,7 +41,9 @@ class StochasticContinousPPAgent(BaseAgent):
         self.starting_points_progress = np.linspace(0, 1, num_starting_points)
         self.std = std
         self.lookahead_points = lookahead_points
-        self.max_delta_steering = max_delta_steering
+        self.max_delta_steering = max_delta
+        self.max_change = max_delta
+        self.exp_decay = 0.1
 
     def distance_point_to_line(self,px, py, x1, y1, x2, y2):
         """
