@@ -7,7 +7,7 @@ from scipy.stats import norm
 import copy
 
 class BaseAgent(object):
-    def __init__(self, max_change=0.05, exp_decay=0.1, start_velocity=0.0, max_speed=2.0 ):
+    def __init__(self, max_change=0.05, exp_decay=0.1, start_velocity=0.0, min_speed, max_speed=2.0 ):
         # self.env = env
         #self.action_space = env.action_space
         #self.observation_space = env.observation_space
@@ -17,6 +17,7 @@ class BaseAgent(object):
         self.exp_decay = exp_decay
         self.start_velocity = start_velocity
         self.max_speed = max_speed
+        self.min_speed = min_speed
 
     def __call__(self, obs: dict, std=None, actions=None): 
         # Std is actually just ignored       
@@ -205,7 +206,7 @@ class StochasticContinousFTGAgent(BaseAgent):
         max_ray = np.clip(max_ray, 0.0, self.speed_multiplier)
         speed = 0.0 + (max_ray / self.speed_multiplier) * self.max_speed
         # print(max_ray)
-        speed = np.clip(speed, 0.5,self.max_speed)
+        speed = np.clip(speed, self.min_speed,self.max_speed)
         return speed
     
     def reset(self):
@@ -431,9 +432,12 @@ class StochasticContinousFTGAgent(BaseAgent):
         delta_angles, new_current_angles = self.get_delta_angle(target_angles, current_angles)  # Adapted for batch processing
         delta_speeds, new_current_velocities = self.get_delta_speed(target_speeds, current_velocities)  # Adapted for batch processing
 
-        means = np.vstack((delta_angles, delta_speeds)).T / self.max_delta #/ 0.15
-        means = np.clip(means, -1.0, 1.0)
-
+        #means = np.vstack((delta_angles, delta_speeds)).T #/ self.max_delta #/ 0.15
+        # means = np.clip(means, -1.0, 1.0)
+        # first for delta_angles
+        clip_lower = -np.min(self.max_delta[:None], current_velocities) 
+        clip_higher = np.min(self.max_delta[:None], self.max_speed[:None] - current_velocities)
+        """
         a = (- 1.0 - means) / std_angle
         b = (1.0 - means ) / std_angle
         #print(a)
@@ -474,6 +478,8 @@ class StochasticContinousFTGAgent(BaseAgent):
         assert (log_probs != np.nan).all()
         #targets = np.array([[target_angles[0],targets[:,1][0]]])
         #print(targets)
+        targets *= self.max_delta
+        """
         return [delta_angles, target_angles, current_angles], targets, log_probs
 
 eval_config = {
