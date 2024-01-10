@@ -400,21 +400,19 @@ class StochasticContinousFTGAgent(BaseAgent):
             assert model_input_dict_["lidar_occupancy"].shape[1] == 1, "Lidar occupancy should be a 3D array with shape (batches, 1, dim)"
             # remove the extra dimension
             model_input_dict_["lidar_occupancy"] = model_input_dict_["lidar_occupancy"][:,0,:]
-        if model_input_dict_["previous_action"].ndim == 3:
-            assert model_input_dict_["previous_action"].shape[1] == 1, "Previous action should be a 3D array with shape (batches, 1, dim)"
-            # remove the extra dimension
-            model_input_dict_["previous_action"] = model_input_dict_["previous_action"][:,0,:]
+        assert "previous_action_steer" in model_input_dict_ and "previous_action_speed" in model_input_dict_
+        assert model_input_dict["previous_action_steer"].ndim == 1
         assert "lidar_occupancy" in model_input_dict_
+        # print("??", model_input_dict_["lidar_occupancy"].shape)
         assert len(model_input_dict_["lidar_occupancy"].shape) == 2, f"Lidar occupancy should be a 2D array, is {model_input_dict_['lidar_occupancy'].shape}"
-        assert "previous_action" in model_input_dict_
+
         #assert len(model_input_dict_["previous_action"].shape) == 3, "Previous action should be a 3D (batch,1,2) array, yes weird TODO!"
         # assert len(model_input_dict_['previous_action'].shape) == 3, "Previous action should be a 3D (batch,1,2) array, yes weird TODO!"
         scans = model_input_dict_['lidar_occupancy']
-        prev_actions = model_input_dict_['previous_action']
-        current_angles = prev_actions[:, 0]
+        current_angles = model_input_dict["previous_action_steer"] #prev_actions[:, 0]
         #print(prev_actions.shape)
         #print(prev_actions[:10])
-        current_velocities = prev_actions[:, 1]
+        current_velocities = model_input_dict["previous_action_speed"] #prev_actions[:, 1]
         
         target_angles, target_speeds = self.compute_target(scans)  # Adapted for batch processing
         #print(target_angles)
@@ -427,7 +425,7 @@ class StochasticContinousFTGAgent(BaseAgent):
         current_velocities = np.clip(current_velocities, 0.0, self.max_speed)
         delta_angles = target_angles - current_angles
         delta_speeds = target_speeds - current_velocities 
-        print("delta , target, current", delta_angles, target_angles, current_angles)
+        #print("delta , target, current", delta_angles, target_angles, current_angles)
         
         # TODO! for now
         delta_angles, new_current_angles = self.get_delta_angle(target_angles, current_angles)  # Adapted for batch processing

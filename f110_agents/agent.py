@@ -19,7 +19,6 @@ class Agent(object):
             parameters = data.get('agent_parameters')
             print("Agent parameters", parameters)
             return StochasticContinousPPAgent(**parameters)
-
         if agent_class == "SwitchingAgent":
             parameters = data.get('agent_parameters')
             # need to call load on the parameters agent1 and agent2

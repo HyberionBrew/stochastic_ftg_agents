@@ -113,7 +113,7 @@ class StochasticContinousPPAgent(BaseAgent):
         indices_ahead = (current_track_point[:, None] + np.arange(max_lookahead_indices)) % track_length
         #print("indiecs ahead shape", indices_ahead.shape)
         # Calculate distances for all these indices
-        distances = np.sqrt((xs[indices_ahead] - x) ** 2 + (ys[indices_ahead] - y) ** 2)
+        distances = np.sqrt((xs[indices_ahead] - x[:, None]) ** 2 + (ys[indices_ahead] - y[:, None]) ** 2)
         #print(distances)
         # Find the first index where distance is greater than lookahead_distance
         #while True:
@@ -211,10 +211,10 @@ class StochasticContinousPPAgent(BaseAgent):
         # calculate the steering angle
         calculated_steering_angle = self.calculate_steering_angle(x,y,theta,next_track_point, lookahead)
         #print("target, steering:", calculated_steering_angle)
-        speed = np.array([0.0])
+        speed = np.zeros_like(calculated_steering_angle)
         reseting = False
         if self.fixed_speed is not None:
-            speed = np.array([self.fixed_speed])
+            speed = speed + self.fixed_speed
             if self.resetting:
                 # speed depends on the distance to the raceline and the angle to the next selected point
                 # if both are small we set the speed to 0.0
@@ -223,7 +223,7 @@ class StochasticContinousPPAgent(BaseAgent):
                 # check current progress
                 if deaccelerate:
                     print("deaccelerating")
-                    speed = np.array([0.0])
+                    speed =np.zeros_like(calculated_steering_angle)
                 
                 """
                 line_first_point = self.track.centerline.xs[self.current_track_point], self.track.centerline.ys[self.current_track_point]
@@ -245,8 +245,9 @@ class StochasticContinousPPAgent(BaseAgent):
         #print(model_input_dict_['previous_action'].shape)
         #print(model_input_dict_['previous_action'])
         # print("model_input_dict_['previous_action'] inside", model_input_dict_['previous_action'])
-        current_angle = model_input_dict_['previous_action'][:,0]
-        current_speed = model_input_dict_['previous_action'][:,1]
+        # print(model_input_dict_['previous_action'])
+        current_angle = model_input_dict["previous_action_steer"]  #model_input_dict_['previous_action'][:,0]
+        current_speed = model_input_dict["previous_action_speed"] #model_input_dict_['previous_action'][:,1]
         
         delta_angles, abs_angle = self.get_delta_angle(calculated_steering_angle, current_angle)
         delta_speeds, abs_speed = self.get_delta_speed(speed, current_speed)
