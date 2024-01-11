@@ -92,11 +92,14 @@ class BaseAgent(object):
             target_speed = delta_speeds
             target_angles = delta_angles
         
-        #print("speed, no clip", target_speed)
-        #print("angle, no clip", target_angles)
+        print("speed, no clip", target_speed)
+        print("angle, no clip", target_angles)
+        print("clip lower vel", clip_lower_vel)
+        print("clip higher vel", clip_higher_vel)
         target_speed = np.clip(target_speed, clip_lower_vel, clip_higher_vel)
         target_angles = np.clip(target_angles, clip_lower_angle, clip_higher_angle)
-
+        print("speed, clip", target_speed)
+        print("angle, clip", target_angles)
         #r = truncnorm.rvs(a[0,0], b[0,0], size=1000)
         #print(a[0,0])
         #print(b[0,0])
@@ -120,8 +123,13 @@ class BaseAgent(object):
             log_probs[:,0] = dist_speed.logpdf(action[:,0])#.sum(axis=1)
             log_probs[:,1] = dist_angles.logpdf(action[:,1])#.sum(axis=1)
         else:
+            target_speed = np.clip(target_speed, clip_lower_vel+0.01, clip_higher_vel-0.01)
+            print(f"Target speed should be smaller than clip higher vel is {clip_higher_vel} and target speed is {target_speed}")
+            assert target_speed <= clip_higher_vel 
+            assert target_speed >= clip_lower_vel
             log_probs[:,0] = dist_angles.logpdf(target_angles)#.sum(axis=1)
             log_probs[:,1] = dist_speed.logpdf(target_speed)#.sum(axis=1)
+            print("log probs", log_probs)
         # log_probs = 1.0
         #print("mean", means)
         #print("target", targets)
