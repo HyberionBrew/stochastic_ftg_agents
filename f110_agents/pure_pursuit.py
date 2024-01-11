@@ -26,7 +26,17 @@ class Track():
 
 
 class StochasticContinousPPAgent(BaseAgent):
-    def __init__(self, deterministic=True, raceline_file='raceline.csv', fixed_speed = None, resetting=True, lookahead_points=200, num_starting_points=2,std=0.3, max_delta=0.05, **kwargs):
+    def __init__(self, deterministic=True, 
+                 raceline_file='raceline.csv', 
+                 fixed_speed = None, 
+                 resetting=True, 
+                 lookahead_points=200, 
+                 num_starting_points=2,
+                 std_steer=0.1,
+                 std_vel=0.1, 
+                 lookahead_distance=1.0,
+                 speed_multiplier=1.0,
+                 max_delta=0.3, **kwargs):
         # initalize parent class
         super().__init__(**kwargs)
         #if not deterministic:
@@ -39,11 +49,15 @@ class StochasticContinousPPAgent(BaseAgent):
         self.subsample = 20
         self.resetting = resetting
         self.starting_points_progress = np.linspace(0, 1, num_starting_points)
-        self.std = std
+        self.std_steer = std_steer
+        self.std_vel = std_vel
         self.lookahead_points = lookahead_points
         self.max_delta_steering = max_delta
         self.max_change = max_delta
         self.exp_decay = 0.1
+        self.lookahead_distance = lookahead_distance
+        self.speed_multiplier = speed_multiplier
+        self.max_delta = max_delta
 
     def distance_point_to_line(self,px, py, x1, y1, x2, y2):
         """
@@ -117,8 +131,8 @@ class StochasticContinousPPAgent(BaseAgent):
         #print(distances)
         # Find the first index where distance is greater than lookahead_distance
         #while True:
-        # dirty fix, set the last distance to high number so we always find one
-        distances[:,-1] = 2.0
+        # dirty fix, set the last distance to high number so we always find one and we dont crash or smth
+        distances[:,-1] = 10.0
         #print(distances)
         #print(lookahead_distance)
         first_valid_indices = np.argmax(distances > lookahead_distance, axis=1)
@@ -182,10 +196,16 @@ class StochasticContinousPPAgent(BaseAgent):
         model_input_dict_ = model_input_dict.copy()
         x = model_input_dict_['poses_x']
         y = model_input_dict_['poses_y']
-        theta_sin = model_input_dict_['theta_sin']
-        theta_cos = model_input_dict_['theta_cos']
-        theta = np.arctan2(theta_sin, theta_cos)
-        
+
+        if 'poses_theta' in model_input_dict_.keys():
+            theta = model_input_dict_['poses_theta']
+            theta[theta > np.pi] -= 2 * np.pi # from simulator
+        else:
+            assert 'theta_sin' in model_input_dict_.keys() and 'theta_cos' in model_input_dict_.keys()
+            theta_sin = model_input_dict_['theta_sin']
+            theta_cos = model_input_dict_['theta_cos']
+            theta = np.arctan2(theta_sin, theta_cos)
+
         # find the current closest track point
         if True:#self.current_track_point is None:
             self.current_track_point = self.find_closest_track_point(x,y)
@@ -203,7 +223,7 @@ class StochasticContinousPPAgent(BaseAgent):
             #exit()
             # exit()
         # find the next track point
-        lookahead = 1.0
+        lookahead = self.lookahead_distance
         next_track_point = self.find_next_track_point(self.current_track_point, x, y, lookahead, max_lookahead_indices=self.lookahead_points)
         # next_track_point += 200
         # print(self.current_track_point, next_track_point)
@@ -238,7 +258,10 @@ class StochasticContinousPPAgent(BaseAgent):
                     reseting = True
                 """
         else:
-            raise NotImplementedError
+            self.track.centerline.vxs = np.array(self.track.centerline.vxs)
+            speed = self.track.centerline.vxs[self.current_track_point] * self.speed_multiplier
+            assert speed.shape == calculated_steering_angle.shape
+            #raise NotImplementedError
         
         #print (calculated_steering_angle)
         # now compute delta action
@@ -257,6 +280,12 @@ class StochasticContinousPPAgent(BaseAgent):
         #print("current_speed inside", delta_speeds + current_speed)
         #print(delta_angles)
         #print(delta_speeds)
+        targets, log_probs = self.compute_action_log_probs(current_speed,
+                                                current_angle,
+                                                delta_speeds,
+                                                delta_angles,
+                                                action=action)
+        """
         means = np.vstack((delta_angles, delta_speeds)).T / self.max_delta_steering
         means = np.clip(means, -1.0, 1.0)
         # actions = means
@@ -301,76 +330,41 @@ class StochasticContinousPPAgent(BaseAgent):
         # also assert no log_prob is nan
         assert (log_probs != np.nan).all()
         ## TODO! here we can add stochasticity!
+        """
         return [next_track_point], targets, log_probs
-
-### this is deprecated ###
-eval_config = {
-    "collision_penalty": -10.0,
-    "progress_weight": 1.0,
-    "raceline_delta_weight": 0.0,
-    "velocity_weight": 0.0,
-    "steering_change_weight": 0.0,
-    "velocity_change_weight": 0.0,
-    "pure_progress_weight": 0.0,
-    "inital_velocity": 1.5,
-    "normalize": False,
-}
 
 
 if __name__ == "__main__":
     from f110_sim_env.base_env import make_base_env
-    agent = StochasticContinousPPAgent(deterministic=True, fixed_speed=0.5)
-    rays = np.ones((1,54,)) * 0.1
-    rays[:,:10] += 0.1
-    #rays += 0.5
-    #print(rays)
-    model_input_dict = {'lidar_occupancy': rays}
-    #print(model_input_dict)
-    #for _ in range(40):
-    #    target = agent(model_input_dict)
-    #    print(target)
+    import matplotlib.pyplot as plt
+    import gymnasium as gym
+    import f110_gym
+    import f110_orl_dataset
 
-    eval_env = make_base_env(map= "Infsaal",
-            fixed_speed=None,
-            random_start =True,
-            train_random_start = False,
-            reward_config = eval_config,
-            eval=False,
-            use_org_reward=True,
-            min_vel=0.0,
-            max_vel=0.0,
-            max_delta_steering=0.05,
-            max_acceleration=0.05,
-        )
+    agent = StochasticContinousPPAgent(raceline_file="/home/fabian/msc/f110_dope/ws_release/f1tenth_gym/gym/f110_gym/maps/Infsaal2/2212_infsaal_fabian_mincurv_3.0_3.0_3.0_rl.csv",
+                                        deterministic=False,
+                                        std_vel=0.1,
+                                        std_steer=0.2, 
+                                        speed_multiplier=1.5, 
+                                        fixed_speed=None,
+                                        max_delta=0.3,
+                                        max_speed=5.0,
+                                        min_speed=0.0,
+                                        lookahead_distance=1.0)
+    F110Env = gym.make('f110-real-v0',
+    # only terminals are available as of right now 
+        encode_cyclic=False,
+        flatten_obs=True,
+        timesteps_to_include=(0,250),
+        use_delta_actions=True,
+        include_time_obs = True,
+        set_terminals=True,
+        delta_factor=1.0,
+        reward_config="reward_raceline.json",
+        **dict(name='f110-real-v0',
+            config = dict(map="Infsaal2", num_agents=1,
+            params=dict(vmin=0.0, vmax=2.0)),
+            render_mode="human")
+    )
 
-    action = np.array([[0.0,0.0],[0.0,0.0],[0.0,0.0]])
-    i = 0
-    while i < 6:
-        eval_env.reset()
-        agent.reset()
-        i += 1
-        done = False
-        truncated = False
-        j = 0
-        while not done and not truncated:
-            obs, reward, done, truncated, info = eval_env.step(action[2])
-            obs_dict = info["observations"]
-            obs_dict_batch = {}
-            for key in obs_dict.keys():
-                if key == 'previous_action':
-                   
-                    obs_dict_batch[key] = np.concatenate((np.array([obs_dict[key]]), np.array([obs_dict[key]]),np.array([obs_dict[key]])), axis=0)
-                    continue
-                obs_dict_batch[key] = np.concatenate((np.array([obs_dict[key]]),np.array([obs_dict[key]]),np.array([obs_dict[key]])), axis=0)
-            
-            #print(obs_dict_batch["previous_action"])
-            _, action , log_prob = agent(model_input_dict=obs_dict_batch)
-            #print("prev_action", info["observations"]["previous_action"])
-            #print("action:", action)
-            #print(obs_dict_batch["previous_action"])
-            _, _ , test_prob = agent(model_input_dict=obs_dict_batch, actions=action)
-            assert((log_prob == test_prob).all())
-            #print(log_prob)
-            # rescale action to be between -1 and 1, 0.05 is one
-            #action = action/0.05
-            eval_env.render()
+    F110Env.simulate(agent,render=True,rollouts=20, episode_length=500)

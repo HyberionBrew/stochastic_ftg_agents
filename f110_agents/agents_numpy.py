@@ -7,7 +7,7 @@ from scipy.stats import norm
 import copy
 
 class BaseAgent(object):
-    def __init__(self, max_change=0.05, exp_decay=0.1, start_velocity=0.0, min_speed, max_speed=2.0 ):
+    def __init__(self, max_change=0.05, exp_decay=0.1, start_velocity=0.0, min_speed=0.5, max_speed=2.0, std_vel=0.1, std_steer=0.1, ):
         # self.env = env
         #self.action_space = env.action_space
         #self.observation_space = env.observation_space
@@ -18,6 +18,8 @@ class BaseAgent(object):
         self.start_velocity = start_velocity
         self.max_speed = max_speed
         self.min_speed = min_speed
+        self.std_vel = std_vel
+        self.std_steer = std_steer
 
     def __call__(self, obs: dict, std=None, actions=None): 
         # Std is actually just ignored       
@@ -63,6 +65,73 @@ class BaseAgent(object):
         new_speed = current + delta_speed
         new_speed = np.clip(new_speed, self.start_velocity, 2.0)
         return delta_speed, new_speed
+    
+    def compute_action_log_probs(self, current_velocities, current_angles, delta_speeds, delta_angles, action=None): 
+        #means = np.vstack((delta_angles, delta_speeds)).T #/ self.max_delta #/ 0.15
+        # means = np.clip(means, -1.0, 1.0)
+        # first for delta_angles
+        #print(self.max_delta)
+        #print("curr vel",current_velocities)
+        #print("curr angle", current_angles)
+        clip_lower_vel = -np.minimum(self.max_delta, current_velocities) 
+        clip_higher_vel = np.minimum(self.max_delta, self.max_speed - current_velocities)
+        a_vel, b_vel = (clip_lower_vel - delta_speeds) / self.std_vel, (clip_higher_vel - delta_speeds) / self.std_vel
+        #print("clip lower vel", clip_lower_vel)
+        #print("clip higher vel", clip_higher_vel)
+        max_steering = 0.4189
+        clip_lower_angle = - np.minimum(self.max_delta, max_steering + current_angles)
+        clip_higher_angle = np.minimum(self.max_delta, max_steering - current_angles)
+        #print("clip lower angle", clip_lower_angle)
+        #print("clip higher angle", clip_higher_angle)
+
+        a_angle, b_angle = (clip_lower_angle - delta_angles) / self.std_steer, (clip_higher_angle - delta_angles) / self.std_steer
+        if not self.deterministic:
+            target_speed = np.random.normal(delta_speeds, self.std_vel)
+            target_angles = np.random.normal(delta_angles, self.std_steer)
+        else:
+            target_speed = delta_speeds
+            target_angles = delta_angles
+        
+        #print("speed, no clip", target_speed)
+        #print("angle, no clip", target_angles)
+        target_speed = np.clip(target_speed, clip_lower_vel, clip_higher_vel)
+        target_angles = np.clip(target_angles, clip_lower_angle, clip_higher_angle)
+
+        #r = truncnorm.rvs(a[0,0], b[0,0], size=1000)
+        #print(a[0,0])
+        #print(b[0,0])
+        # plot r
+        #import matplotlib.pyplot as plt
+        dist_speed = truncnorm(a_vel, b_vel, loc=delta_speeds, scale=self.std_vel)
+        dist_angles = truncnorm(a_angle, b_angle, loc=delta_angles, scale=self.std_steer)
+        #ax.plot(x, dist_speed.pdf(x), 'k-', lw=2, label='frozen pdf')
+        # show plot
+        #ax.plot(x, dist_angles.pdf(x), 'g-', lw=2, label='frozen pdf')
+        #plt.show()
+        # sample and plot
+        #dis2t = truncnorm(a[0,0], b[0,0], loc=means[0,0], scale=std_angle)
+        #samples = dis2t.rvs(size=1000)
+        #plt.hist(samples, density=True, bins='auto', histtype='stepfilled', alpha=0.2)
+        #plt.show()
+        log_probs = np.zeros((len(target_angles),2))
+        if action is not None:
+            assert (action <= self.max_delta).all() and (action >= -self.max_delta).all(), "Action should be between -1 and 1"
+            
+            log_probs[:,0] = dist_speed.logpdf(action[:,0])#.sum(axis=1)
+            log_probs[:,1] = dist_angles.logpdf(action[:,1])#.sum(axis=1)
+        else:
+            log_probs[:,0] = dist_angles.logpdf(target_angles)#.sum(axis=1)
+            log_probs[:,1] = dist_speed.logpdf(target_speed)#.sum(axis=1)
+        # log_probs = 1.0
+        #print("mean", means)
+        #print("target", targets)
+        assert (log_probs != -np.inf).all()
+        # also assert no log_prob is nan
+        assert (log_probs != np.nan).all()
+
+        #target a (n,2) array of delta_angles and delta_speed
+        targets = np.vstack((target_angles, target_speed)).T
+        return targets, log_probs
 
 class SwitchingAgentWrapper(object):
     def __init__(self, Agent1, Agent2):
@@ -159,7 +228,10 @@ class DoubleAgentWrapper(object):
 @input lidar rays need to be already normalized
 """
 class StochasticContinousFTGAgent(BaseAgent):
-    def __init__(self, current_speed=0.0, deterministic=False, gap_blocker = 2, max_speed=2.0, horizon=0.2, subsample=20,gap_size_max_speed=10, speed_multiplier=2.0, std=0.3,max_delta=0.5):
+    def __init__(self, current_speed=0.0, deterministic=False, 
+                 gap_blocker = 2, max_speed=2.0, 
+                 horizon=0.2, subsample=20,gap_size_max_speed=10, 
+                 speed_multiplier=2.0, max_delta=0.3, min_speed=0.5, std_vel=0.1, std_steer=0.1):
         # initalize parent
         super(StochasticContinousFTGAgent, self).__init__()
         self.deterministic = deterministic
@@ -173,10 +245,11 @@ class StochasticContinousFTGAgent(BaseAgent):
         self.gap_blocker = gap_blocker
         self.start_velocity = current_speed
         self.speed_multiplier = speed_multiplier# higher values slower agent
-        self.std = std
         self.max_speed = max_speed 
         self.max_delta = max_delta
-
+        self.std_steer = std_steer
+        self.std_vel = std_vel
+        self.min_speed = min_speed
  
     
     def compute_speed(self, gap):
@@ -202,6 +275,7 @@ class StochasticContinousFTGAgent(BaseAgent):
         print(max_ray)
         print("------")
         """
+        # print(self.min_speed)
         max_ray = gap  #[0] # TODO gap is a value of shape (batch, 1)
         max_ray = np.clip(max_ray, 0.0, self.speed_multiplier)
         speed = 0.0 + (max_ray / self.speed_multiplier) * self.max_speed
@@ -216,7 +290,7 @@ class StochasticContinousFTGAgent(BaseAgent):
 
     
     def __str__(self):
-        return f"StochasticContinousFTGAgent_{self.speed_multiplier}_{self.gap_blocker}_{self.horizon}_{self.std}_{self.max_speed}"
+        return f"StochasticContinousFTGAgent_{self.speed_multiplier}_{self.gap_blocker}_{self.horizon}_{self.std_steer}_{self.std_vel}_{self.max_speed}"
     
     def set_zeros_around_max(self,scans_processed, max_indices):
         batch_size, num_scans = scans_processed.shape
@@ -389,8 +463,6 @@ class StochasticContinousFTGAgent(BaseAgent):
     
     # use the prev action from the model_input_dict to make this stateless
     def __call__(self, model_input_dict, actions=None, std=None, timestep=None):
-        std_angle = self.std
-        std_speed = self.std
         # safety copy to ensure no funky business
         model_input_dict_ = copy.deepcopy(model_input_dict)
         action =actions
@@ -414,8 +486,10 @@ class StochasticContinousFTGAgent(BaseAgent):
         #print(prev_actions.shape)
         #print(prev_actions[:10])
         current_velocities = model_input_dict["previous_action_speed"] #prev_actions[:, 1]
-        
+        print(scans)
         target_angles, target_speeds = self.compute_target(scans)  # Adapted for batch processing
+        print(target_angles)
+        
         #print(target_angles)
         #print("speed", target_speeds)
         #print("current", current_velocities)
@@ -432,54 +506,12 @@ class StochasticContinousFTGAgent(BaseAgent):
         delta_angles, new_current_angles = self.get_delta_angle(target_angles, current_angles)  # Adapted for batch processing
         delta_speeds, new_current_velocities = self.get_delta_speed(target_speeds, current_velocities)  # Adapted for batch processing
 
-        #means = np.vstack((delta_angles, delta_speeds)).T #/ self.max_delta #/ 0.15
-        # means = np.clip(means, -1.0, 1.0)
-        # first for delta_angles
-        clip_lower = -np.min(self.max_delta[:None], current_velocities) 
-        clip_higher = np.min(self.max_delta[:None], self.max_speed[:None] - current_velocities)
-        """
-        a = (- 1.0 - means) / std_angle
-        b = (1.0 - means ) / std_angle
-        #print(a)
-        #print(b)
-        if not self.deterministic:
-            targets = np.random.normal(means, std_angle)
-        else:
-            targets = means
-
-        targets = np.clip(targets, -1.0, 1.0)
-
-        #r = truncnorm.rvs(a[0,0], b[0,0], size=1000)
-        #print(a[0,0])
-        #print(b[0,0])
-        # plot r
-        #import matplotlib.pyplot as plt
-        dist = truncnorm(a, b, loc=means, scale=std_angle)
-        # sample and plot
-        #dis2t = truncnorm(a[0,0], b[0,0], loc=means[0,0], scale=std_angle)
-        #samples = dis2t.rvs(size=1000)
-        #plt.hist(samples, density=True, bins='auto', histtype='stepfilled', alpha=0.2)
-        #plt.show()
-        if action is not None:
-            assert (action <= 1.0).all() and (action >= -1.0).all(), "Action should be between -1 and 1"
-            log_probs = dist.logpdf(action).sum(axis=1)
-        else:
-            #print("targets",targets)
-            log_probs = dist.logpdf(targets) #.sum(axis=1)
-            #print("not added log_probs", log_probs)
-            #print(log_probs)
-            log_probs = np.sum(log_probs, axis=1)
-
-        # log_probs = 1.0
-        #print("mean", means)
-        #print("target", targets)
-        assert (log_probs != -np.inf).all()
-        # also assert no log_prob is nan
-        assert (log_probs != np.nan).all()
-        #targets = np.array([[target_angles[0],targets[:,1][0]]])
-        #print(targets)
-        targets *= self.max_delta
-        """
+        targets, log_probs = self.compute_action_log_probs(current_velocities,
+                                                        current_angles,
+                                                        delta_speeds,
+                                                        delta_angles,
+                                                        action=action)
+        
         return [delta_angles, target_angles, current_angles], targets, log_probs
 
 eval_config = {
@@ -497,19 +529,35 @@ eval_config = {
 if __name__ == "__main__":
     from f110_sim_env.base_env import make_base_env
     import matplotlib.pyplot as plt
-    agent1 = StochasticContinousFTGAgent(current_speed = 0.0, deterministic=False, speed_multiplier=1.0)
-    agent2 = StochasticContinousFTGAgent(current_speed = 0.0, deterministic=False, speed_multiplier=0.5)
-    agent = DoubleAgentWrapper(agent1, agent2, timestep_switch=250)
-    rays = np.ones((1,54,)) * 0.1
-    rays[:,:10] += 0.1
-    #rays += 0.5
-    #print(rays)
-    model_input_dict = {'lidar_occupancy': rays}
-    #print(model_input_dict)
-    #for _ in range(40):
-    #    target = agent(model_input_dict)
-    #    print(target)
+    import gymnasium as gym
+    import f110_gym
+    import f110_orl_dataset
 
+    agent = StochasticContinousFTGAgent(current_speed = 0.0, 
+                                        deterministic=False,
+                                        std_vel=0.1,
+                                        std_steer=0.2, 
+                                        speed_multiplier=0.5, 
+                                        max_speed=5.0, min_speed=0.0)
+    F110Env = gym.make('f110-real-v0',
+    # only terminals are available as of right now 
+        encode_cyclic=False,
+        flatten_obs=True,
+        timesteps_to_include=(0,250),
+        use_delta_actions=True,
+        include_time_obs = True,
+        set_terminals=True,
+        delta_factor=1.0,
+        reward_config="reward_raceline.json",
+        **dict(name='f110-real-v0',
+            config = dict(map="Infsaal2", num_agents=1,
+            params=dict(vmin=0.0, vmax=2.0)),
+            render_mode="human")
+    )
+
+    F110Env.simulate(agent,render=True,rollouts=20, episode_length=500)
+
+    """
     eval_env = make_base_env(map= "Infsaal",
             fixed_speed=None,
             random_start =True,
@@ -571,3 +619,4 @@ if __name__ == "__main__":
             eval_env.render()
         plt.plot(vels)
         plt.show()
+        """
