@@ -101,7 +101,9 @@ class StochasticContinousPPAgent(BaseAgent):
         # Find the index of the minimum distance for each point
         return np.argmin(distances, axis=0)
     def __str__(self):
-        return "pure_pursuit"
+        import os
+        raceline_name = os.path.basename(self.raceline_file)[:-4]
+        return f"pure_pursuit2_{self.speed_multiplier}_{self.lookahead_distance}_{raceline_name}_{self.max_delta}_{self.min_speed}"
     def reset(self):
         self.current_track_point = None
 
@@ -242,7 +244,7 @@ class StochasticContinousPPAgent(BaseAgent):
                 # print("calculated steering angle", calculated_steering_angle[0])
                 # check current progress
                 if deaccelerate:
-                    print("deaccelerating")
+                    #print("deaccelerating")
                     speed =np.zeros_like(calculated_steering_angle)
                 
                 """
@@ -280,11 +282,14 @@ class StochasticContinousPPAgent(BaseAgent):
         #print("current_speed inside", delta_speeds + current_speed)
         #print(delta_angles)
         #print(delta_speeds)
+        #if not(self.resetting):
         targets, log_probs = self.compute_action_log_probs(current_speed,
                                                 current_angle,
                                                 delta_speeds,
                                                 delta_angles,
                                                 action=action)
+        #else:
+        #    targets = 
         """
         means = np.vstack((delta_angles, delta_speeds)).T / self.max_delta_steering
         means = np.clip(means, -1.0, 1.0)

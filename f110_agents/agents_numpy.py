@@ -92,14 +92,10 @@ class BaseAgent(object):
             target_speed = delta_speeds
             target_angles = delta_angles
         
-        print("speed, no clip", target_speed)
-        print("angle, no clip", target_angles)
-        print("clip lower vel", clip_lower_vel)
-        print("clip higher vel", clip_higher_vel)
+
         target_speed = np.clip(target_speed, clip_lower_vel, clip_higher_vel)
         target_angles = np.clip(target_angles, clip_lower_angle, clip_higher_angle)
-        print("speed, clip", target_speed)
-        print("angle, clip", target_angles)
+
         #r = truncnorm.rvs(a[0,0], b[0,0], size=1000)
         #print(a[0,0])
         #print(b[0,0])
@@ -124,18 +120,18 @@ class BaseAgent(object):
             log_probs[:,1] = dist_angles.logpdf(action[:,1])#.sum(axis=1)
         else:
             target_speed = np.clip(target_speed, clip_lower_vel+0.01, clip_higher_vel-0.01)
-            print(f"Target speed should be smaller than clip higher vel is {clip_higher_vel} and target speed is {target_speed}")
-            assert target_speed <= clip_higher_vel 
-            assert target_speed >= clip_lower_vel
+            #print(f"Target speed should be smaller than clip higher vel is {clip_higher_vel} and target speed is {target_speed}")
+            #assert target_speed <= clip_higher_vel 
+            #assert target_speed >= clip_lower_vel
             log_probs[:,0] = dist_angles.logpdf(target_angles)#.sum(axis=1)
             log_probs[:,1] = dist_speed.logpdf(target_speed)#.sum(axis=1)
-            print("log probs", log_probs)
+            #print("log probs", log_probs)
         # log_probs = 1.0
         #print("mean", means)
         #print("target", targets)
-        assert (log_probs != -np.inf).all()
+        #assert (log_probs != -np.inf).all()
         # also assert no log_prob is nan
-        assert (log_probs != np.nan).all()
+        #assert (log_probs != np.nan).all()
 
         #target a (n,2) array of delta_angles and delta_speed
         targets = np.vstack((target_angles, target_speed)).T
@@ -298,7 +294,7 @@ class StochasticContinousFTGAgent(BaseAgent):
 
     
     def __str__(self):
-        return f"StochasticContinousFTGAgent_{self.speed_multiplier}_{self.gap_blocker}_{self.horizon}_{self.std_steer}_{self.std_vel}_{self.max_speed}"
+        return f"StochasticContinousFTGAgent_{self.speed_multiplier}_{self.gap_blocker}_{self.horizon}_{self.std_steer}_{self.std_vel}_{self.max_speed}_{self.max_delta}_{self.min_speed}"
     
     def set_zeros_around_max(self,scans_processed, max_indices):
         batch_size, num_scans = scans_processed.shape
@@ -494,9 +490,9 @@ class StochasticContinousFTGAgent(BaseAgent):
         #print(prev_actions.shape)
         #print(prev_actions[:10])
         current_velocities = model_input_dict["previous_action_speed"] #prev_actions[:, 1]
-        print(scans)
+        #print(scans)
         target_angles, target_speeds = self.compute_target(scans)  # Adapted for batch processing
-        print(target_angles)
+        #print(target_angles)
         
         #print(target_angles)
         #print("speed", target_speeds)
