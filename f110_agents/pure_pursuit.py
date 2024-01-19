@@ -1,6 +1,9 @@
 from f110_agents.agents_numpy import BaseAgent
 import numpy as np
 from scipy.stats import truncnorm
+import os
+import pkg_resources
+
 """
 a pure pursuit agent to drive back to the raceline 
 """
@@ -12,6 +15,13 @@ class Raceline():
 
 class Track():
     def __init__(self, file):
+        # get path of the current file
+        current_path = __file__
+        #go one up and then raceline folder, then add the file
+        parent_dir = os.path.dirname(current_path)
+        higher_dir = os.path.dirname(parent_dir)
+        file = os.path.join(higher_dir, "racelines", file)
+
         self.track = self.load_track(file)
         self.centerline = Raceline()
         self.centerline.xs = self.track[:,0]
@@ -227,12 +237,14 @@ class StochasticContinousPPAgent(BaseAgent):
         # find the next track point
         lookahead = self.lookahead_distance
         next_track_point = self.find_next_track_point(self.current_track_point, x, y, lookahead, max_lookahead_indices=self.lookahead_points)
+        # print(next_track_point)
         # next_track_point += 200
         # print(self.current_track_point, next_track_point)
         assert next_track_point.shape == self.current_track_point.shape
         # calculate the steering angle
         calculated_steering_angle = self.calculate_steering_angle(x,y,theta,next_track_point, lookahead)
         #print("target, steering:", calculated_steering_angle)
+        # print(calculated_steering_angle)
         speed = np.zeros_like(calculated_steering_angle)
         reseting = False
         if self.fixed_speed is not None:
@@ -283,11 +295,14 @@ class StochasticContinousPPAgent(BaseAgent):
         #print(delta_angles)
         #print(delta_speeds)
         #if not(self.resetting):
+        #print(delta_angles)
+        #print("delta")
         targets, log_probs = self.compute_action_log_probs(current_speed,
                                                 current_angle,
                                                 delta_speeds,
                                                 delta_angles,
                                                 action=action)
+        #print(targets)
         #else:
         #    targets = 
         """

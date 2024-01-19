@@ -6,6 +6,54 @@ from scipy.stats import truncnorm
 from scipy.stats import norm
 import copy
 
+def calculate_clipped_log_prob(dist, values, lower_bound, upper_bound):
+    # Vectorized computation for the cumulative log probabilities
+    lower_probs = np.log(dist.cdf(lower_bound))
+    upper_probs = np.log(1 - dist.cdf(upper_bound))
+
+    # Vectorized computation for the log PDF
+    pdf_probs = dist.logpdf(values)
+    # Assign the appropriate probabilities based on the clipping
+    log_probs = np.where(values <= lower_bound, lower_probs, np.where(values >= upper_bound, upper_probs, pdf_probs))
+    return log_probs
+
+def plot_distribution_with_action(dist, action, log_prob, clip_lower, clip_upper, title="speed"):
+    """
+    Plot a normal distribution, action taken, and display the log probability.
+    
+    Args:
+    dist (scipy.stats.rv_continuous): The normal distribution object.
+    action (float): The action taken.
+    log_prob (float): The log probability of the action.
+    clip_lower (float): The lower bound for clipping.
+    clip_upper (float): The upper bound for clipping.
+    """
+    import matplotlib.pyplot as plt
+    # Create an array of values for plotting the PDF
+    x = np.linspace(clip_lower - 1, clip_upper + 1, 1000)
+    y = dist.pdf(x)
+
+    # Plot the PDF
+    plt.plot(x, y, label='Probability Density Function')
+
+    # Plot the action as a vertical line
+    plt.axvline(action, color='red', linestyle='--', label=f'Action = {action:.2f}')
+    plt.axvline(clip_lower, color='green', linestyle='-', label=f'Lower Bound = {clip_lower}')
+    plt.axvline(clip_upper, color='blue', linestyle='-', label=f'Upper Bound = {clip_upper}')
+    # Annotate the plot with the log probability
+    plt.annotate(f'Log Probability = {log_prob:.2f}', 
+                 xy=(action, dist.pdf(action)), 
+                 xytext=(action, dist.pdf(action) + 0.05),
+                 arrowprops=dict(facecolor='black', shrink=0.05))
+
+    plt.xlabel('Action Value')
+    plt.ylabel('Probability Density')
+    plt.title(f'{title} action and its Log Probability on the Distribution')
+    plt.legend()
+    plt.grid(True)
+    plt.show()
+
+
 class BaseAgent(object):
     def __init__(self, max_change=0.05, exp_decay=0.1, start_velocity=0.0, min_speed=0.5, max_speed=2.0, std_vel=0.1, std_steer=0.1, ):
         # self.env = env
@@ -73,9 +121,15 @@ class BaseAgent(object):
         #print(self.max_delta)
         #print("curr vel",current_velocities)
         #print("curr angle", current_angles)
-        clip_lower_vel = -np.minimum(self.max_delta, current_velocities) 
+        
+        #clip_lower_vel = -np.minimum(self.max_delta, np.maximum(current_velocities-self.min_speed, 0.0))# , current_velocities- self.min_speed)
+        log_probs = np.zeros((len(current_velocities),2))
+        clip_lower_vel = 0.5- current_velocities
+        clip_lower_vel = np.maximum(clip_lower_vel, -self.max_delta)
+        clip_lower_vel = np.minimum(clip_lower_vel, self.max_delta)
+
         clip_higher_vel = np.minimum(self.max_delta, self.max_speed - current_velocities)
-        a_vel, b_vel = (clip_lower_vel - delta_speeds) / self.std_vel, (clip_higher_vel - delta_speeds) / self.std_vel
+        #a_vel, b_vel = (clip_lower_vel - delta_speeds) / self.std_vel, (clip_higher_vel - delta_speeds) / self.std_vel
         #print("clip lower vel", clip_lower_vel)
         #print("clip higher vel", clip_higher_vel)
         max_steering = 0.4189
@@ -83,48 +137,51 @@ class BaseAgent(object):
         clip_higher_angle = np.minimum(self.max_delta, max_steering - current_angles)
         #print("clip lower angle", clip_lower_angle)
         #print("clip higher angle", clip_higher_angle)
-
-        a_angle, b_angle = (clip_lower_angle - delta_angles) / self.std_steer, (clip_higher_angle - delta_angles) / self.std_steer
+        delta_speeds = np.clip(delta_speeds, clip_lower_vel, clip_higher_vel)
+        delta_angles = np.clip(delta_angles, clip_lower_angle, clip_higher_angle)
+        delta_speeds_copy = delta_speeds.copy()
+        delta_angles_copy = delta_angles.copy()
+        #a_angle, b_angle = (clip_lower_angle - delta_angles) / self.std_steer, (clip_higher_angle - delta_angles) / self.std_steer
         if not self.deterministic:
-            target_speed = np.random.normal(delta_speeds, self.std_vel)
-            target_angles = np.random.normal(delta_angles, self.std_steer)
+            a_vel, b_vel = (clip_lower_vel - delta_speeds) / self.std_vel, (clip_higher_vel - delta_speeds) / self.std_vel
+            #print("----~~")
+            #print(a_vel)
+            #print(b_vel)
+            a_angle, b_angle = (clip_lower_angle - delta_angles) / self.std_steer, (clip_higher_angle - delta_angles) / self.std_steer
+            need_dist = a_vel != b_vel
+            target_speed = delta_speeds.copy()
+
+            dist_speed = truncnorm(a_vel[need_dist], b_vel[need_dist], loc=delta_speeds[need_dist], scale=self.std_vel)
+            #print(delta_speeds)
+            target_speed[need_dist] = dist_speed.rvs().copy()
+
+            dist_angles = truncnorm(a_angle, b_angle, loc=delta_angles, scale=self.std_steer)
+
+            # sample from the distributions
+            
+            target_angles = dist_angles.rvs()
+            #target_speed = np.random.normal(delta_speeds, self.std_vel)
+            #target_angles = np.random.normal(delta_angles, self.std_steer)
         else:
             target_speed = delta_speeds
             target_angles = delta_angles
-        
+            target_speed = np.clip(target_speed, clip_lower_vel, clip_higher_vel)
+            target_angles = np.clip(target_angles, clip_lower_angle, clip_higher_angle)
 
-        target_speed = np.clip(target_speed, clip_lower_vel, clip_higher_vel)
-        target_angles = np.clip(target_angles, clip_lower_angle, clip_higher_angle)
+  
+        if not self.deterministic:
+            if action is not None:
+                action_speed = action[:,1]
+                action_angles = action[:,0]
+            else:
+                action_speed = target_speed
+                action_angles = target_angles
+            log_probs_speed = np.zeros_like(action_speed)
 
-        #r = truncnorm.rvs(a[0,0], b[0,0], size=1000)
-        #print(a[0,0])
-        #print(b[0,0])
-        # plot r
-        #import matplotlib.pyplot as plt
-        dist_speed = truncnorm(a_vel, b_vel, loc=delta_speeds, scale=self.std_vel)
-        dist_angles = truncnorm(a_angle, b_angle, loc=delta_angles, scale=self.std_steer)
-        #ax.plot(x, dist_speed.pdf(x), 'k-', lw=2, label='frozen pdf')
-        # show plot
-        #ax.plot(x, dist_angles.pdf(x), 'g-', lw=2, label='frozen pdf')
-        #plt.show()
-        # sample and plot
-        #dis2t = truncnorm(a[0,0], b[0,0], loc=means[0,0], scale=std_angle)
-        #samples = dis2t.rvs(size=1000)
-        #plt.hist(samples, density=True, bins='auto', histtype='stepfilled', alpha=0.2)
-        #plt.show()
-        log_probs = np.zeros((len(target_angles),2))
-        if action is not None:
-            assert (action <= self.max_delta).all() and (action >= -self.max_delta).all(), "Action should be between -1 and 1"
-            
-            log_probs[:,0] = dist_speed.logpdf(action[:,0])#.sum(axis=1)
-            log_probs[:,1] = dist_angles.logpdf(action[:,1])#.sum(axis=1)
-        else:
-            target_speed = np.clip(target_speed, clip_lower_vel+0.01, clip_higher_vel-0.01)
-            #print(f"Target speed should be smaller than clip higher vel is {clip_higher_vel} and target speed is {target_speed}")
-            #assert target_speed <= clip_higher_vel 
-            #assert target_speed >= clip_lower_vel
-            log_probs[:,0] = dist_angles.logpdf(target_angles)#.sum(axis=1)
-            log_probs[:,1] = dist_speed.logpdf(target_speed)#.sum(axis=1)
+            log_probs_speed[need_dist] = dist_speed.logpdf(action_speed[need_dist])
+            log_probs_angles = dist_angles.logpdf(action_angles)
+
+            log_probs = np.stack((log_probs_speed, log_probs_angles), axis=1)
             #print("log probs", log_probs)
         # log_probs = 1.0
         #print("mean", means)
@@ -132,9 +189,41 @@ class BaseAgent(object):
         #assert (log_probs != -np.inf).all()
         # also assert no log_prob is nan
         #assert (log_probs != np.nan).all()
+        #print(current_velocities)
+        #print(current_angles)
+        #if dist_speed is not None:
 
+        j = 0
+
+        """
+        print("----")
+        print(a_vel)
+        print(b_vel)
+        for i in range(2):
+            if need_dist[i]:
+                #print("need dist", i)
+                #print(dist_speed.rvs())
+                #print(len(dist_speed.rvs()))
+                #print(log_probs[i])
+                #print(clip_lower_vel[i])
+                #print(clip_higher_vel[i])
+                print(a_vel[i])
+                print(b_vel[i])
+                print(delta_speeds)
+                #print((clip_lower_vel[i] - delta_speeds_copy[i]) / self.std_vel, (clip_higher_vel[i] - delta_speeds_copy[i]) / self.std_vel)
+                dist_speed_plot = truncnorm(a_vel[i], b_vel[i], loc=delta_speeds[i], scale=self.std_vel)
+                plot_distribution_with_action(dist_speed_plot, action_speed[i], 
+                                                log_probs_speed[i], 
+                                                clip_lower_vel[i], clip_higher_vel[i], "Speed")
+                dist_angles_plot = truncnorm(a_angle[i], b_angle[i], loc=delta_angles[i], scale=self.std_steer)
+                plot_distribution_with_action(dist_angles_plot, action_angles[i],
+                                                log_probs_angles[i],
+                                                clip_lower_angle[i], clip_higher_angle[i], "Steering")
+                j += 1
+        """
         #target a (n,2) array of delta_angles and delta_speed
         targets = np.vstack((target_angles, target_speed)).T
+        
         return targets, log_probs
 
 class SwitchingAgentWrapper(object):
@@ -222,7 +311,7 @@ class DoubleAgentWrapper(object):
         #print(np.where(timestep < self.timestep_switch))
         return_log_probs[np.where(timestep < self.timestep_switch)[0]] = log_prob1
         return_log_probs[np.where(timestep >= self.timestep_switch)[0]] = log_prob2
-
+        
 
         return _ , return_actions, return_log_probs
     def reset(self):
@@ -466,10 +555,9 @@ class StochasticContinousFTGAgent(BaseAgent):
         return target_angle, target_speed
     
     # use the prev action from the model_input_dict to make this stateless
-    def __call__(self, model_input_dict, actions=None, std=None, timestep=None):
+    def __call__(self, model_input_dict, action=None, std=None, timestep=None):
         # safety copy to ensure no funky business
         model_input_dict_ = copy.deepcopy(model_input_dict)
-        action =actions
         # Asserting the shape of action if it's not None
         if action is not None:
             assert action.ndim == 2 and action.shape[1] == 2, "Action should be a 2D array with shape (batches, 2)"
@@ -509,7 +597,6 @@ class StochasticContinousFTGAgent(BaseAgent):
         # TODO! for now
         delta_angles, new_current_angles = self.get_delta_angle(target_angles, current_angles)  # Adapted for batch processing
         delta_speeds, new_current_velocities = self.get_delta_speed(target_speeds, current_velocities)  # Adapted for batch processing
-
         targets, log_probs = self.compute_action_log_probs(current_velocities,
                                                         current_angles,
                                                         delta_speeds,
