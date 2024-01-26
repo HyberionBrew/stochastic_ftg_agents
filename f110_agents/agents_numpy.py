@@ -153,7 +153,8 @@ class BaseAgent(object):
 
             dist_speed = truncnorm(a_vel[need_dist], b_vel[need_dist], loc=delta_speeds[need_dist], scale=self.std_vel)
             #print(delta_speeds)
-            target_speed[need_dist] = dist_speed.rvs().copy()
+            if need_dist.any():
+                target_speed[need_dist] = dist_speed.rvs().copy()
 
             dist_angles = truncnorm(a_angle, b_angle, loc=delta_angles, scale=self.std_steer)
 
@@ -314,6 +315,7 @@ class DoubleAgentWrapper(object):
         
 
         return _ , return_actions, return_log_probs
+    
     def reset(self):
         self.Agent1.reset()
         self.Agent2.reset()
