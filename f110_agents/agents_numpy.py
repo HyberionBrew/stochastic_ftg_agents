@@ -154,7 +154,12 @@ class BaseAgent(object):
             dist_speed = truncnorm(a_vel[need_dist], b_vel[need_dist], loc=delta_speeds[need_dist], scale=self.std_vel)
             #print(delta_speeds)
             if need_dist.any():
-                target_speed[need_dist] = dist_speed.rvs().copy()
+                #print(need_dist)
+                #print(dist_speed)
+                try:
+                    target_speed[need_dist] = dist_speed.rvs().copy()
+                except:
+                    print("error encountered, no adjusting of the targets")
 
             dist_angles = truncnorm(a_angle, b_angle, loc=delta_angles, scale=self.std_steer)
 
@@ -325,7 +330,7 @@ class DoubleAgentWrapper(object):
 class StochasticContinousFTGAgent(BaseAgent):
     def __init__(self, current_speed=0.0, deterministic=False, 
                  gap_blocker = 2, max_speed=2.0, 
-                 horizon=0.2, subsample=20,gap_size_max_speed=10, 
+                 horizon=0.5, subsample=20,gap_size_max_speed=10, 
                  speed_multiplier=2.0, max_delta=0.3, min_speed=0.5, std_vel=0.1, std_steer=0.1):
         # initalize parent
         super(StochasticContinousFTGAgent, self).__init__()
@@ -418,7 +423,7 @@ class StochasticContinousFTGAgent(BaseAgent):
         og_scans = scans_batch.copy()
         scans = scans_batch.copy()
         # block 15% of the left and rightmost scans
-        block_length = int(len(scans[0])*0.15)
+        block_length = int(len(scans[0])*0.05)
         scans[:,:block_length] = -1.0
         scans[:,-block_length:] = -1.0
         # now lets iterate over the horizon
