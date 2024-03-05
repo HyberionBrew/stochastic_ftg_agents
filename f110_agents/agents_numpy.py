@@ -114,7 +114,7 @@ class BaseAgent(object):
         new_speed = np.clip(new_speed, self.start_velocity, 2.0)
         return delta_speed, new_speed
     
-    def compute_action_log_probs(self, current_velocities, current_angles, delta_speeds, delta_angles, action=None): 
+    def compute_action_log_probs(self, current_velocities, current_angles, delta_speeds, delta_angles, action=None, deterministic=False): 
         #means = np.vstack((delta_angles, delta_speeds)).T #/ self.max_delta #/ 0.15
         # means = np.clip(means, -1.0, 1.0)
         # first for delta_angles
@@ -142,7 +142,7 @@ class BaseAgent(object):
         delta_speeds_copy = delta_speeds.copy()
         delta_angles_copy = delta_angles.copy()
         #a_angle, b_angle = (clip_lower_angle - delta_angles) / self.std_steer, (clip_higher_angle - delta_angles) / self.std_steer
-        if not self.deterministic:
+        if not self.deterministic and not deterministic:
             a_vel, b_vel = (clip_lower_vel - delta_speeds) / self.std_vel, (clip_higher_vel - delta_speeds) / self.std_vel
             #print("----~~")
             #print(a_vel)
@@ -175,7 +175,7 @@ class BaseAgent(object):
             target_angles = np.clip(target_angles, clip_lower_angle, clip_higher_angle)
 
   
-        if not self.deterministic:
+        if not self.deterministic and not deterministic:
             if action is not None:
                 action_speed = action[:,1]
                 action_angles = action[:,0]
@@ -410,8 +410,6 @@ class StochasticContinousFTGAgent(BaseAgent):
         # Zero out elements not in the contiguous region of max_index
         result = np.where(contiguous_region_mask, scans_processed, 0.0)
         # set the first non zero element in each row to 0.0
-        # above code has small bug and leaves first -1.0 in conitnous result region
-        # easy fix ~.+
         result = np.where(result == -1.0, 0, result)
 
         return result
@@ -422,7 +420,7 @@ class StochasticContinousFTGAgent(BaseAgent):
         horizon = self.horizon
         og_scans = scans_batch.copy()
         scans = scans_batch.copy()
-        # block 15% of the left and rightmost scans
+        # block 5% of the left and rightmost scans
         block_length = int(len(scans[0])*0.05)
         scans[:,:block_length] = -1.0
         scans[:,-block_length:] = -1.0
@@ -473,7 +471,8 @@ class StochasticContinousFTGAgent(BaseAgent):
         # now lets find the index of the max
         max_indices = np.argmax(scans_processed, axis=1)
         # where the max is negative we set the index to scans.shape[1]//2
-        #kinda hacky but implicitly true ~.~
+        # this is a fallback if we dont find anything positive even with a distance of 0.05
+        # however, this should very rarely, if ever happen
         # where max_indices are 0 we set scans_processed to 0.5
         scans_processed[max_indices == 0, len(scans_processed[0])//2] = 0.5
         max_indices[max_indices == 0] = len(scans_processed[0])//2
@@ -562,12 +561,14 @@ class StochasticContinousFTGAgent(BaseAgent):
         return target_angle, target_speed
     
     # use the prev action from the model_input_dict to make this stateless
-    def __call__(self, model_input_dict, action=None, std=None, timestep=None):
+    def __call__(self, model_input_dict, actions=None, 
+                 std=None, timestep=None, deterministic=False):
         # safety copy to ensure no funky business
         model_input_dict_ = copy.deepcopy(model_input_dict)
         # Asserting the shape of action if it's not None
-        if action is not None:
-            assert action.ndim == 2 and action.shape[1] == 2, "Action should be a 2D array with shape (batches, 2)"
+        # print(model_input_dict)
+        if actions is not None:
+            assert actions.ndim == 2 and actions.shape[1] == 2, "Action should be a 2D array with shape (batches, 2)"
         if model_input_dict_["lidar_occupancy"].ndim == 3:
             assert model_input_dict_["lidar_occupancy"].shape[1] == 1, "Lidar occupancy should be a 3D array with shape (batches, 1, dim)"
             # remove the extra dimension
@@ -603,13 +604,19 @@ class StochasticContinousFTGAgent(BaseAgent):
         
         # TODO! for now
         delta_angles, new_current_angles = self.get_delta_angle(target_angles, current_angles)  # Adapted for batch processing
+        #assert not np.isnan(delta_angles).any(), "Delta angles should not contain nans"
         delta_speeds, new_current_velocities = self.get_delta_speed(target_speeds, current_velocities)  # Adapted for batch processing
+        
+        # assert no nans in delta_speeds
+        #assert not np.isnan(delta_speeds).any(), "Delta speeds should not contain nans"
+        
         targets, log_probs = self.compute_action_log_probs(current_velocities,
                                                         current_angles,
                                                         delta_speeds,
                                                         delta_angles,
-                                                        action=action)
-        
+                                                        action=actions,
+                                                        deterministic=deterministic)
+        #assert not np.isnan(targets).any(), "Log probs should not contain nans"
         return [delta_angles, target_angles, current_angles], targets, log_probs
 
 eval_config = {
