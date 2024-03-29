@@ -142,13 +142,17 @@ class BaseAgent(object):
         delta_speeds_copy = delta_speeds.copy()
         delta_angles_copy = delta_angles.copy()
         #a_angle, b_angle = (clip_lower_angle - delta_angles) / self.std_steer, (clip_higher_angle - delta_angles) / self.std_steer
+        # assert no nans in speeds
+        assert not np.isnan(delta_speeds).any(), "Speeds should not contain nans"
         if not self.deterministic and not deterministic:
             a_vel, b_vel = (clip_lower_vel - delta_speeds) / self.std_vel, (clip_higher_vel - delta_speeds) / self.std_vel
             #print("----~~")
             #print(a_vel)
             #print(b_vel)
             a_angle, b_angle = (clip_lower_angle - delta_angles) / self.std_steer, (clip_higher_angle - delta_angles) / self.std_steer
-            need_dist = a_vel != b_vel
+            #print(a_vel[2626])
+            #print(b_vel[2626])
+            need_dist = ~np.isclose(a_vel, b_vel, atol=1e-6) #a_vel != b_vel
             target_speed = delta_speeds.copy()
 
             dist_speed = truncnorm(a_vel[need_dist], b_vel[need_dist], loc=delta_speeds[need_dist], scale=self.std_vel)
@@ -158,6 +162,11 @@ class BaseAgent(object):
                 #print(dist_speed)
                 try:
                     target_speed[need_dist] = dist_speed.rvs().copy()
+                    # in case target speed contains nans (this happens in exactly one random generator state)
+                    # might be a bug in scipy truncnorm, since this works always (with the same inputs) except for this one specific rng state
+                    # my suspicion: its a floating point error due to the division for a_vel and b_vel
+                    while np.isnan(target_speed).any():
+                        target_speed[need_dist] = dist_speed.rvs().copy()
                 except:
                     print("error encountered, no adjusting of the targets")
 
@@ -166,6 +175,12 @@ class BaseAgent(object):
             # sample from the distributions
             
             target_angles = dist_angles.rvs()
+            # while never encountert here, for safety, see longer comment 10 lines above
+            while np.isnan(target_angles).any():
+                target_angles = dist_angles.rvs()
+                
+            # assert no nans in target_speed
+            assert not np.isnan(target_speed).any(), "Target speeds should not contain nans"
             #target_speed = np.random.normal(delta_speeds, self.std_vel)
             #target_angles = np.random.normal(delta_angles, self.std_steer)
         else:
@@ -229,7 +244,8 @@ class BaseAgent(object):
         """
         #target a (n,2) array of delta_angles and delta_speed
         targets = np.vstack((target_angles, target_speed)).T
-        
+        # assert no nans in target
+        assert not np.isnan(targets).any(), "Targets should not contain nans"
         return targets, log_probs
 
 class SwitchingAgentWrapper(object):

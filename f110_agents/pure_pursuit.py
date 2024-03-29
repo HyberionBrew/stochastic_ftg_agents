@@ -68,7 +68,7 @@ class StochasticContinousPPAgent(BaseAgent):
         self.lookahead_distance = lookahead_distance
         self.speed_multiplier = speed_multiplier
         self.max_delta = max_delta
-        print("New agent picked")
+
 
     def distance_point_to_line(self,px, py, x1, y1, x2, y2):
         """
@@ -202,7 +202,7 @@ class StochasticContinousPPAgent(BaseAgent):
 
         return steering_angle
 
-    def __call__(self, model_input_dict: dict, action=None, std=None, deaccelerate=False, **kwargs):
+    def __call__(self, model_input_dict: dict, actions=None, std=None, deaccelerate=False, deterministic=False, **kwargs):
         # model input dict values have a batch dimension
         # extract the current position and orientation
         #print(model_input_dict)
@@ -302,7 +302,8 @@ class StochasticContinousPPAgent(BaseAgent):
                                                 current_angle,
                                                 delta_speeds,
                                                 delta_angles,
-                                                action=action)
+                                                action=actions,
+                                                deterministic=deterministic,)
         #print(targets)
         #else:
         #    targets = 
