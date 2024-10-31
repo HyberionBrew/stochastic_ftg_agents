@@ -259,101 +259,12 @@ class StochasticContinousPPAgent(BaseAgent):
                 if deaccelerate:
                     #print("deaccelerating")
                     speed =np.zeros_like(calculated_steering_angle)
-                
-                """
-                line_first_point = self.track.centerline.xs[self.current_track_point], self.track.centerline.ys[self.current_track_point]
-                next_point = (self.current_track_point + 1) % len(self.track.centerline.xs)
-                line_second_point = self.track.centerline.xs[next_point], self.track.centerline.ys[next_point]
-                current_point = x, y
-                dist = self.distance_point_to_line(current_point[0][0], current_point[1][0], line_first_point[0][0], line_first_point[1][0], 
-                                                    line_second_point[0][0], 
-                                                    line_second_point[1][0])
-                if dist < 0.2 and abs(calculated_steering_angle) < 0.2:
-                    speed = np.array([0.0])
-                    reseting = True
-                """
         else:
             self.track.centerline.vxs = np.array(self.track.centerline.vxs)
             speed = self.track.centerline.vxs[self.current_track_point] * self.speed_multiplier
             assert speed.shape == calculated_steering_angle.shape
-            #raise NotImplementedError
-        
-        #print (calculated_steering_angle)
-        # now compute delta action
-        #print(model_input_dict_['previous_action'].shape)
-        #print(model_input_dict_['previous_action'])
-        # print("model_input_dict_['previous_action'] inside", model_input_dict_['previous_action'])
-        # print(model_input_dict_['previous_action'])
-        current_angle = model_input_dict["previous_action_steer"]  #model_input_dict_['previous_action'][:,0]
-        current_speed = model_input_dict["previous_action_speed"] #model_input_dict_['previous_action'][:,1]
-        
-        delta_angles, abs_angle = self.get_delta_angle(calculated_steering_angle, current_angle)
-        delta_speeds, abs_speed = self.get_delta_speed(speed, current_speed)
-        #print("target angle", abs_angle)
-        #print("target speed", abs_speed)
-        #print("curr speed", current_speed)
-        #print("current_speed inside", delta_speeds + current_speed)
-        #print(delta_angles)
-        #print(delta_speeds)
-        #if not(self.resetting):
-        #print(delta_angles)
-        #print("delta")
-        targets, log_probs = self.compute_action_log_probs(current_speed,
-                                                current_angle,
-                                                delta_speeds,
-                                                delta_angles,
-                                                action=actions,
-                                                deterministic=deterministic,)
-        #print(targets)
-        #else:
-        #    targets = 
-        """
-        means = np.vstack((delta_angles, delta_speeds)).T / self.max_delta_steering
-        means = np.clip(means, -1.0, 1.0)
-        # actions = means
-        #actions = np.zeros_like(means)
-        ####### JUST copied do better #######
-        a = (- 1.0 - means) / self.std
-        b = (1.0 - means ) / self.std
-        #print(a)
-        #print(b)
-        if not self.deterministic:
-            targets = np.random.normal(means, self.std)
-        else:
-            targets = means
 
-        targets = np.clip(targets, -1.0, 1.0)
-
-        #r = truncnorm.rvs(a[0,0], b[0,0], size=1000)
-        #print(a[0,0])
-        #print(b[0,0])
-        # plot r
-        #import matplotlib.pyplot as plt
-        dist = truncnorm(a, b, loc=means, scale=self.std)
-        # sample and plot
-        #dis2t = truncnorm(a[0,0], b[0,0], loc=means[0,0], scale=std_angle)
-        #samples = dis2t.rvs(size=1000)
-        #plt.hist(samples, density=True, bins='auto', histtype='stepfilled', alpha=0.2)
-        #plt.show()
-        if action is not None:
-            assert (action <= 1.0).all() and (action >= -1.0).all(), "Action should be between -1 and 1"
-            log_probs = dist.logpdf(action).sum(axis=1)
-        else:
-            #print("targets",targets)
-            log_probs = dist.logpdf(targets) #.sum(axis=1)
-            #print("not added log_probs", log_probs)
-            #print(log_probs)
-            log_probs = np.sum(log_probs, axis=1)
-
-        # log_probs = 1.0
-        #print("mean", means)
-        #print("target", targets)
-        assert (log_probs != -np.inf).all()
-        # also assert no log_prob is nan
-        assert (log_probs != np.nan).all()
-        ## TODO! here we can add stochasticity!
-        """
-        return [next_track_point], targets, log_probs
+        return np.array([calculated_steering_angle, speed]) #[next_track_point], targets, log_probs
 
 
 if __name__ == "__main__":

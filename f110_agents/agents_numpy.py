@@ -352,7 +352,7 @@ class StochasticContinousFTGAgent(BaseAgent):
         super(StochasticContinousFTGAgent, self).__init__()
         self.deterministic = deterministic
         self.horizon = horizon 
-        self.subsample = 20
+        self.subsample = 1 #20
         self.current_angle = 0.0
         self.current_velocity = current_speed
         self.max_change = max_delta
@@ -589,8 +589,8 @@ class StochasticContinousFTGAgent(BaseAgent):
             assert model_input_dict_["lidar_occupancy"].shape[1] == 1, "Lidar occupancy should be a 3D array with shape (batches, 1, dim)"
             # remove the extra dimension
             model_input_dict_["lidar_occupancy"] = model_input_dict_["lidar_occupancy"][:,0,:]
-        assert "previous_action_steer" in model_input_dict_ and "previous_action_speed" in model_input_dict_
-        assert model_input_dict["previous_action_steer"].ndim == 1
+        #assert "previous_action_steer" in model_input_dict_ and "previous_action_speed" in model_input_dict_
+        #assert model_input_dict["previous_action_steer"].ndim == 1
         assert "lidar_occupancy" in model_input_dict_
         # print("??", model_input_dict_["lidar_occupancy"].shape)
         assert len(model_input_dict_["lidar_occupancy"].shape) == 2, f"Lidar occupancy should be a 2D array, is {model_input_dict_['lidar_occupancy'].shape}"
@@ -598,10 +598,10 @@ class StochasticContinousFTGAgent(BaseAgent):
         #assert len(model_input_dict_["previous_action"].shape) == 3, "Previous action should be a 3D (batch,1,2) array, yes weird TODO!"
         # assert len(model_input_dict_['previous_action'].shape) == 3, "Previous action should be a 3D (batch,1,2) array, yes weird TODO!"
         scans = model_input_dict_['lidar_occupancy']
-        current_angles = model_input_dict["previous_action_steer"] #prev_actions[:, 0]
+        #current_angles = model_input_dict["previous_action_steer"] #prev_actions[:, 0]
         #print(prev_actions.shape)
         #print(prev_actions[:10])
-        current_velocities = model_input_dict["previous_action_speed"] #prev_actions[:, 1]
+        #current_velocities = model_input_dict["previous_action_speed"] #prev_actions[:, 1]
         #print(scans)
         target_angles, target_speeds = self.compute_target(scans)  # Adapted for batch processing
         #print(target_angles)
@@ -613,27 +613,8 @@ class StochasticContinousFTGAgent(BaseAgent):
         #print("target", target_speeds)
         #assert target_speeds >= 0.0, "Speed should be >= 0.0"
         #assert current_velocities >= 0.0, "Velocity should be >= 0.0"
-        current_velocities = np.clip(current_velocities, 0.0, self.max_speed)
-        delta_angles = target_angles - current_angles
-        delta_speeds = target_speeds - current_velocities 
-        #print("delta , target, current", delta_angles, target_angles, current_angles)
         
-        # TODO! for now
-        delta_angles, new_current_angles = self.get_delta_angle(target_angles, current_angles)  # Adapted for batch processing
-        #assert not np.isnan(delta_angles).any(), "Delta angles should not contain nans"
-        delta_speeds, new_current_velocities = self.get_delta_speed(target_speeds, current_velocities)  # Adapted for batch processing
-        
-        # assert no nans in delta_speeds
-        #assert not np.isnan(delta_speeds).any(), "Delta speeds should not contain nans"
-        
-        targets, log_probs = self.compute_action_log_probs(current_velocities,
-                                                        current_angles,
-                                                        delta_speeds,
-                                                        delta_angles,
-                                                        action=actions,
-                                                        deterministic=deterministic)
-        #assert not np.isnan(targets).any(), "Log probs should not contain nans"
-        return [delta_angles, target_angles, current_angles], targets, log_probs
+        return np.array([target_angles, target_speeds]) #[delta_angles, target_angles, current_angles], targets, log_probs
 
 eval_config = {
     "collision_penalty": -10.0,
