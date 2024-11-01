@@ -27,6 +27,7 @@ class Agent(object):
         agent_class = data.get('agent_class')
         if agent_class == "FTGAgent":
             parameters = data.get('agent_parameters')
+            print("Agent parameters", parameters)
             if not no_print:
                 print("Agent parameters", parameters)
             return StochasticContinousFTGAgent(**parameters)

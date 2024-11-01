@@ -352,7 +352,7 @@ class StochasticContinousFTGAgent(BaseAgent):
         super(StochasticContinousFTGAgent, self).__init__()
         self.deterministic = deterministic
         self.horizon = horizon 
-        self.subsample = 1 #20
+        self.subsample = 20
         self.current_angle = 0.0
         self.current_velocity = current_speed
         self.max_change = max_delta
@@ -437,14 +437,14 @@ class StochasticContinousFTGAgent(BaseAgent):
         og_scans = scans_batch.copy()
         scans = scans_batch.copy()
         # block 5% of the left and rightmost scans
-        block_length = int(len(scans[0])*0.05)
+        block_length = int(len(scans[0])*0.15)
         scans[:,:block_length] = -1.0
         scans[:,-block_length:] = -1.0
         # now lets iterate over the horizon
         #scans_finished_indices = np.zeros(len(scans_batch))
         scans_done = np.zeros(len(scans))
         scans_processed = np.zeros_like(scans) - 1.0
-
+        # print(scans.shape)
         while horizon > 0.05:
             #print(horizon)
             #print("done:", scans_done)
@@ -517,6 +517,7 @@ class StochasticContinousFTGAgent(BaseAgent):
 
         target_angle = self.lidar_ray_to_steering(target_rays, self.subsample)
         target_speed = self.compute_speed(og_scans[:,og_scans.shape[1]//2])
+        #print(target_angle)
         return target_angle, target_speed
 
     def compute_target_old(self, scans):
