@@ -159,12 +159,9 @@ class StochasticContinousPPAgent(BaseAgent):
         # no_valid_index = np.all(distances <= lookahead_distance, axis=1)
         # first_valid_indices[no_valid_index] = 0
 
-        # Adjust the shape of first_valid_indices to be compatible for indexing
-        first_valid_indices = first_valid_indices.reshape(-1, 1)
-
-        #print(first_valid_indices.shape)
-        #print(first_valid_indices)
-        return ((current_track_point + first_valid_indices) % track_length)[0]
+        # one offset per batch entry; (batch,) + (batch, 1) would broadcast to (batch, batch) and, after [0],
+        # apply the offset of the first entry to the whole batch (bug in the published benchmark results)
+        return (current_track_point + first_valid_indices) % track_length
     
     def calculate_steering_angle(self, x, y, theta, next_track_point, lookahead_distance):
         """
@@ -354,39 +351,3 @@ class StochasticContinousPPAgent(BaseAgent):
         ## TODO! here we can add stochasticity!
         """
         return [next_track_point], targets, log_probs
-
-
-if __name__ == "__main__":
-    from f110_sim_env.base_env import make_base_env
-    import matplotlib.pyplot as plt
-    import gymnasium as gym
-    import f110_gym
-    import f110_orl_dataset
-
-    agent = StochasticContinousPPAgent(raceline_file="/home/fabian/msc/f110_dope/ws_release/f1tenth_gym/gym/f110_gym/maps/Infsaal2/2212_infsaal_fabian_mincurv_3.0_3.0_3.0_rl.csv",
-                                        deterministic=False,
-                                        std_vel=0.1,
-                                        std_steer=0.2, 
-                                        speed_multiplier=1.5, 
-                                        fixed_speed=None,
-                                        max_delta=0.3,
-                                        max_speed=5.0,
-                                        min_speed=0.0,
-                                        lookahead_distance=1.0)
-    F110Env = gym.make('f110-real-v0',
-    # only terminals are available as of right now 
-        encode_cyclic=False,
-        flatten_obs=True,
-        timesteps_to_include=(0,250),
-        use_delta_actions=True,
-        include_time_obs = True,
-        set_terminals=True,
-        delta_factor=1.0,
-        reward_config="reward_raceline.json",
-        **dict(name='f110-real-v0',
-            config = dict(map="Infsaal2", num_agents=1,
-            params=dict(vmin=0.0, vmax=2.0)),
-            render_mode="human")
-    )
-
-    F110Env.simulate(agent,render=True,rollouts=20, episode_length=500)
